@@ -1,0 +1,3 @@
+#### Work in progress...
+
+python index.py -url http://stash.com -username $username -password $password -dest $destination -action fetch
