@@ -9,70 +9,88 @@ import argparse
 
 class StashTrace:
     def __init__(self, args = None):
+        # Create CLI Parser
         parser = argparse.ArgumentParser(description='stashy arguments');
 
         # URL and account variables
         parser.add_argument('-url', action='store', dest='stashUrl', help='Stash Url');
         parser.add_argument('-username', action='store', dest='username', help='Stash Username');
         parser.add_argument('-password', action='store', dest='password', help='Stash Password');
-        parser.add_argument('-dest', action='store', dest='dest', help='Destination');
-        parser.add_argument('-action', action='store', dest='action', help='Action');
+        parser.add_argument('-dest', action='store', dest='dest', help='Folder Path');
+        parser.add_argument('-action', action='store', dest='action', help='Stash Action');
+        parser.add_argument('-project', action='store', dest='project', help='Project Name');
 
+        # Parsing CLI options
         argParams = parser.parse_args();
 
-        getattr(self, argParams.action)(argParams);
+        # get {argParams.action} method
+        return self.callMethod(argParams.action, argParams);
 
 
-    def fetch(self, argParams):
+    def callMethod(self, methodName, args):
+        method = getattr(self, methodName);
+
+        return method(args);
+
+
+    def clone(self, argParams):
+        # stash url, username and password are mandatory
         if not (argParams.stashUrl and argParams.username and argParams.password):
             print "Stashy login requires username, password and stash url"
             exit();
 
-        # if dest is not defined save in root
-        dest = "../" + argParams.dest if argParams.dest else "./";
-
         # Connect to stash
         stash = stashy.connect(argParams.stashUrl, argParams.username, argParams.password);
 
-        # Iterate over all projects (that you have access to)
-        allRepos = stash.projects.list();
+        # if dest is not defined save in root
+        dest = "../" + argParams.dest if argParams.dest else "./";
 
-        for repo in allRepos:
+        if argParams.project:
+            projectList = stash.projects[argParams.project].repos.list();
+
+            self.cloneAllRepos(dest, argParams.project, projectList);
+        else:
+            # Iterate over all projects (that you have access to)
+            allProjects = stash.projects.list();
+
+            for project in allProjects:
+                projectList = stash.projects[project[unicode("key")]].repos.list();
+
+                self.cloneAllRepos(dest, project[unicode("key")], projectList);
+
+
+    def cloneAllRepos(self, dest, projectName , projectList):
+        for repo in projectList:
+
             # repo name
-            repoName = repo[unicode("key")];
+            repoName = repo[unicode("name")];
 
-            # list of projects
-            repoList = stash.projects[repoName].repos.list();
+            projectPath = os.path.join(projectName, repoName);
 
-            for projectList in repoList:
+            # absolut dir path
+            gitDir = os.path.abspath(os.path.join(dest, projectPath));
 
-                # project name
-                projectName = projectList[unicode("name")];
+            # clone repo if dir does not exist
+            if (os.path.exists(gitDir) == False):
 
-                # absolut dir path
-                gitDir = os.path.abspath(dest + "/" + repoName + "/" + projectName);
+                # repo clone url
+                cloneUrl = repo[unicode("cloneUrl")];
 
-                # clone project if dir does not exist
-                if (os.path.exists(gitDir) == False):
+                # clone repo in root/projectName/repoName
+                self.systemCall("git clone " + cloneUrl + " " + gitDir);
 
-                    # project clone url
-                    cloneUrl = projectList[unicode("cloneUrl")];
+                # check if dir has .git
+                isGit = self.systemCall("git rev-parse --is-inside-work-tree", gitDir);
 
-                    # clone project in root/repoName/projectName
-                    self.systemCall("git clone " + cloneUrl + " " + gitDir);
-
-                    # check if dir has .git
-                    isGit = self.systemCall("git rev-parse --is-inside-work-tree", gitDir);
-
-                    if isGit != False:
-                        print "#####", repoName + "/" + projectName, "#####"
-                        self.checkRepo(gitDir)
-                        print "-----------------------------------------\n"
-
-                else:
-                    print "#####", repoName + "/" + projectName, "#####"
-                    self.checkRepo(gitDir, True)
+                if isGit != False:
+                    print "#####", projectPath, "#####"
+                    self.checkRepo(gitDir)
                     print "-----------------------------------------\n"
+
+            else:
+                print "#####", projectPath, "#####"
+                self.checkRepo(gitDir, True)
+                print "-----------------------------------------\n"
 
 
     def systemCall(self, command, cwd = None):
@@ -82,6 +100,7 @@ class StashTrace:
             if cwd:
                 output = subprocess.check_output("cd " + cwd + " && " + command, shell=True)
             else:
+                print "###################", command, "################";
                 output = subprocess.check_output(command, shell=True)
 
             if len(output) > 0:
@@ -118,7 +137,7 @@ class StashTrace:
 
                 # if branch exists do --track
                 if self.isBranchExist(branchName, gitDir) is False:
-                    self.systemCall("git checkout --track " + branchName  + " origin/" + branchName, gitDir);
+                    self.systemCall("git checkout --track origin/" + branchName, gitDir);
                 else:
                     # checkout branch
                     self.systemCall("git checkout " + branchName, gitDir);
