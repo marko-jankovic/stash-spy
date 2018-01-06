@@ -68,7 +68,7 @@ class StashTrace:
             projectPath = os.path.join(projectName, repoName);
 
             # absolut dir path
-            gitDir = os.path.abspath(os.path.join(dest, projectPath));
+            gitDir = "'" + os.path.abspath(os.path.join(dest, projectPath)) + "'";
 
             # clone repo if dir does not exist
             if (os.path.exists(gitDir) == False):
@@ -100,7 +100,6 @@ class StashTrace:
             if cwd:
                 output = subprocess.check_output("cd " + cwd + " && " + command, shell=True)
             else:
-                print "###################", command, "################";
                 output = subprocess.check_output(command, shell=True)
 
             if len(output) > 0:
@@ -139,8 +138,8 @@ class StashTrace:
                 if self.isBranchExist(branchName, gitDir) is False:
                     self.systemCall("git checkout --track origin/" + branchName, gitDir);
                 else:
-                    # checkout branch
-                    self.systemCall("git checkout " + branchName, gitDir);
+                    # checkout branch and discard local changes
+                    self.systemCall("git checkout -f " + branchName, gitDir);
 
                 # --ff-only Refuse to merge and exit with a non-zero status unless the current
                 # HEAD is already up-to-date or the merge can be resolved as a fast-forward
