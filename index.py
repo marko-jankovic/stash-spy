@@ -15,9 +15,13 @@ import signal;
 #    level=10
 #);
 
+# todo
+# git shortlog -sn
+# git log --all --author={USER} --pretty=format:"%an - %ar : %s" > "user".txt
+
 logging.basicConfig(
     format='%(message)s',
-    level=20
+    level=10
 );
 
 logger = logging.getLogger('stash-spy');
@@ -118,6 +122,9 @@ class StashTrace:
     def systemCall(self, command, cwd = None):
         cmd = False;
 
+        # fix for "fatal: Unable to create '/*/.git/index.lock': File exists."
+        subprocess.check_output('cd ' + cwd + ' && ' + 'rm -f ./.git/index.lock', shell=True);
+
         try:
             if cwd:
                 output = subprocess.check_output('cd ' + cwd + ' && ' + command, shell=True);
@@ -134,22 +141,21 @@ class StashTrace:
             return False;
 
 
-    def isBranchExist(self, branchName, gitDir):
-        return self.systemCall('git branch | grep -w ' + branchName, gitDir)
+    def verifyBranch(self, branchName, gitDir):
+        return self.systemCall('git rev-parse --verify --quiet ' + branchName, gitDir)
 
 
     def checkRepo (self, gitDir, exist = None):
+        projectName = gitDir.split('/')[-1];
+
+        logger.debug('  ... git fetch --prune "%s" ...', projectName);
         # deleting the refs to the branches
         # that don't exist on the remote
-        logger.debug("... fetch prune ....")
-        self.systemCall('git fetch --prune', gitDir);
+        self.systemCall('git fetch --prune --quiet', gitDir);
 
-        # fix for "fatal: Unable to create '/*/.git/index.lock': File exists."
-        self.systemCall('rm -f ./.git/index.lock', gitDir);
-
+        logger.debug('  ... grep all "%s" branches ....', projectName);
         # get list of all remotes
-        logger.debug("... branch grep ....")
-        grepBranhes = self.systemCall('git branch --all | grep origin | grep -v master | grep -v HEAD', gitDir)
+        grepBranhes = self.systemCall('git branch --all --quiet | grep origin | grep -v master | grep -v HEAD', gitDir)
 
         if grepBranhes != False:
             # branch list
@@ -160,23 +166,27 @@ class StashTrace:
                 # branch name
                 branchName = branch.replace('remotes/origin/', '');
 
-                # if branch exists do --track
-                if self.isBranchExist(branchName, gitDir) is False:
-                    logger.debug("... checkout origin ....")
+                # if branch does not exists localy
+                if self.verifyBranch(branchName, gitDir) is False:
+                    logger.debug('  ... switching to origin/%s branch ....', branchName);
                     # create local branch {branchName}
-                    self.systemCall('git checkout --track origin/' + branchName, gitDir);
-
-                    logger.debug("... pull all ....")
-                    self.systemCall('git pull --all', gitDir);
+                    self.systemCall('git branch ' + branchName + ' origin/' + branchName + ' --quiet', gitDir);
                 else:
-                    # checkout branch and discard local changes
-                    self.systemCall('git checkout -f ' + branchName, gitDir);
+                    logger.debug('  ... git checkout #%s ....', branchName);
+                    self.systemCall('git checkout --force --quiet ' + branchName, gitDir);
 
-                # --ff-only
-                # Refuse to merge and exit with a non-zero status unless the current
-                # HEAD is already up-to-date or the merge can be resolved as a fast-forward
-                if exist == True:
-                    logger.debug("... pull ff-only ....")
-                    self.systemCall('git pull --ff-only', gitDir);
+                    logger.debug('  ... git fetch --all ....');
+                    self.systemCall('git fetch --all --quiet', gitDir);
+
+                    logger.debug('  ... git reset --hard origin/%s....', branchName);
+                    # "git fetch" downloads the latest from remote without trying to merge or rebase anything
+                    # "git reset" for reseting the origin/{branchName} branch to what we just fetched
+                    # --hard option changes all the files in working tree to match the files in origin/{branchName}
+                    self.systemCall('git reset --hard --quiet origin/' + branchName, gitDir);
+
+                    logger.debug('  ... git pull origin %s....', branchName);
+                    self.systemCall('git pull origin ' + branchName + ' --quiet', gitDir);
+
+                    logger.debug('\n');
 
 StashTrace()
