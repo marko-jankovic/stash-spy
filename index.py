@@ -98,13 +98,16 @@ class StashTrace:
         if not os.path.exists(tmpDir): os.makedirs(tmpDir);
 
         # most recent content modification expressed in seconds
-        mtime = os.stat(tmpFile).st_mtime;
+        if os.path.isfile(tmpFile):
+            mtime = os.stat(tmpFile).st_mtime;
+        else:
+            mtime = 0;
 
         # determine how old is file in seconds
         minOld = int((time.time() - mtime)/60);
         humanTime = time.strftime("%M:%S", time.gmtime(time.time() - mtime));
 
-        if minOld >= int(olderThan):
+        if minOld >= int(olderThan or 1):
             # create temp file
             open(tmpFile, 'w').close();
 
@@ -119,10 +122,10 @@ class StashTrace:
         for repo in projectList:
 
             # repo name
-            repoName = repo[unicode('name')];
+            repoName = repo[unicode('name')].replace(' ', '-').lower();
 
             # replace space with dash and lowercase
-            projectPath = os.path.join(projectName, repoName.replace(' ', '-').lower());
+            projectPath = os.path.join(projectName, repoName);
 
             # absolute dir path
             gitDir = os.path.abspath(os.path.join(dest, projectPath));
