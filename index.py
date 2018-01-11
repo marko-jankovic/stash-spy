@@ -8,6 +8,7 @@ import argparse;
 import logging;
 import sys;
 import signal;
+import time;
 
 #logging.basicConfig(
 #    format='%(asctime)s %(name)s: %(levelname)s %(message)s (#pid %(process)d)',
@@ -18,6 +19,7 @@ import signal;
 # todo
 # git shortlog -sn
 # git log --all --author={USER} --pretty=format:"%an - %ar : %s" > "user".txt
+# warning: refname 'codata.staging.20170331' is ambiguous.
 
 logging.basicConfig(
     format='%(message)s',
@@ -38,6 +40,7 @@ class StashTrace:
         parser.add_argument('-dest', action='store', dest='dest', help='Folder Path');
         parser.add_argument('-action', action='store', dest='action', help='Stash Action');
         parser.add_argument('-project', action='store', dest='project', help='Project Name');
+        parser.add_argument('-olderThan', action='store', dest='olderThan', help='Set fetch time in minutes');
 
         signal.signal(signal.SIGINT, self.exitGracefully);
         signal.signal(signal.SIGTERM, self.exitGracefully);
@@ -74,7 +77,7 @@ class StashTrace:
         if argParams.project:
             projectList = stash.projects[argParams.project].repos.list();
 
-            self.cloneAllRepos(dest, argParams.project, projectList);
+            self.cloneAllRepos(dest, argParams.project, projectList, argParams.olderThan);
         else:
             # Iterate over all projects (that you have access to)
             allProjects = stash.projects.list();
@@ -82,10 +85,37 @@ class StashTrace:
             for project in allProjects:
                 projectList = stash.projects[project[unicode('key')]].repos.list();
 
-                self.cloneAllRepos(dest, project[unicode('key')], projectList);
+                self.cloneAllRepos(dest, project[unicode('key')], projectList, argParams.olderThan);
 
 
-    def cloneAllRepos(self, dest, projectName , projectList):
+    def checkMtime(self, dest, projectName, repoName, olderThan):
+        # hidden dir path
+        tmpDir = os.path.abspath(os.path.join(dest, projectName, '.tmp'));
+        # tmp file path
+        tmpFile = os.path.join(tmpDir, repoName);
+
+        # create hidden dir for storing tmp files
+        if not os.path.exists(tmpDir): os.makedirs(tmpDir);
+
+        # most recent content modification expressed in seconds
+        mtime = os.stat(tmpFile).st_mtime;
+
+        # determine how old is file in seconds
+        minOld = int((time.time() - mtime)/60);
+        humanTime = time.strftime("%M:%S", time.gmtime(time.time() - mtime));
+
+        if minOld >= int(olderThan):
+            # create temp file
+            open(tmpFile, 'w').close();
+
+            return True;
+        else:
+            logger.debug(' ... %s/%s has been updated before %s min', projectName, repoName, humanTime);
+            return False;
+
+    def cloneAllRepos(self, dest, projectName , projectList, olderThan):
+        logger.debug('\n### %s ###', projectName);
+
         for repo in projectList:
 
             # repo name
@@ -97,36 +127,37 @@ class StashTrace:
             # absolute dir path
             gitDir = os.path.abspath(os.path.join(dest, projectPath));
 
-            # clone repo if dir does not exist
-            if (os.path.exists(gitDir) == False):
+            logger.debug('\n> Checking #%s/%s ...', projectName, repoName);
+            # check if last pull happend before N minutes
+            shouldRun = self.checkMtime(dest, projectName, repoName, olderThan);
 
-                # repo clone url
-                cloneUrl = repo[unicode('cloneUrl')];
+            if shouldRun is True:
+                # clone repo if dir does not exist
+                if (os.path.exists(gitDir) == False):
 
-                # clone repo in root/projectName/repoName
-                self.systemCall('git clone ' + cloneUrl + ' ' + gitDir);
+                    # repo clone url
+                    cloneUrl = repo[unicode('cloneUrl')];
 
-                # check if dir has .git
-                isGit = self.systemCall('git rev-parse --is-inside-work-tree', gitDir);
+                    # clone repo in root/projectName/repoName
+                    self.systemCall('git clone ' + cloneUrl + ' ' + gitDir);
 
-                if isGit != False:
-                    logger.info('\n');
-                    logger.info('#### %s', projectPath);
-                    self.checkRepo(gitDir)
-            else:
-                logger.info('\n');
-                logger.info('#### %s', projectPath);
-                self.checkRepo(gitDir, True);
+                    # check if dir has .git
+                    isGit = self.systemCall('git rev-parse --is-inside-work-tree', gitDir);
+
+                    if isGit != False:
+                        self.checkRepo(gitDir)
+                else:
+                    self.checkRepo(gitDir, True);
 
 
     def systemCall(self, command, cwd = None):
         cmd = False;
 
-        # fix for "fatal: Unable to create '/*/.git/index.lock': File exists."
-        subprocess.check_output('cd ' + cwd + ' && ' + 'rm -f ./.git/index.lock', shell=True);
-
         try:
             if cwd:
+                # fix for "fatal: Unable to create '/*/.git/index.lock': File exists."
+                subprocess.check_output('cd ' + cwd + ' && ' + 'find ./.git -name "*.lock" -type f -delete', shell=True);
+
                 output = subprocess.check_output('cd ' + cwd + ' && ' + command, shell=True);
             else:
                 output = subprocess.check_output(command, shell=True);
@@ -172,7 +203,7 @@ class StashTrace:
                     # create local branch {branchName}
                     self.systemCall('git branch ' + branchName + ' origin/' + branchName + ' --quiet', gitDir);
                 else:
-                    logger.debug('  ... git checkout #%s ....', branchName);
+                    logger.debug('\n  ... git checkout #%s ....', branchName);
                     self.systemCall('git checkout --force --quiet ' + branchName, gitDir);
 
                     logger.debug('  ... git fetch --all ....');
@@ -187,6 +218,5 @@ class StashTrace:
                     logger.debug('  ... git pull origin %s....', branchName);
                     self.systemCall('git pull origin ' + branchName + ' --quiet', gitDir);
 
-                    logger.debug('\n');
 
 StashTrace()
