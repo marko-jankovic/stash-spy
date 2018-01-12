@@ -192,8 +192,8 @@ class StashTrace:
         grepBranhes = self.systemCall('git branch --all --quiet | grep origin | grep -v master | grep -v HEAD', gitDir)
 
         if grepBranhes != False:
-            # branch list
-            allBranches = re.sub('\s+', ' ', grepBranhes).strip().split(' ');
+            # branch list, replace space and asterisk
+            allBranches = re.sub('\s+|\*', ' ', grepBranhes).strip().split(' ');
 
             # git checkout for each branch and git pull
             for branch in allBranches:
