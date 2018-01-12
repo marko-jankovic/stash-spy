@@ -207,7 +207,7 @@ class StashTrace:
                     self.systemCall('git branch ' + branchName + ' origin/' + branchName + ' --quiet', gitDir);
                 else:
                     logger.debug('\n  ... git checkout #%s ....', branchName);
-                    self.systemCall('git checkout --force --quiet ' + branchName, gitDir);
+                    self.systemCall('git checkout -B --force --quiet ' + branchName, gitDir);
 
                     logger.debug('  ... git fetch --all ....');
                     self.systemCall('git fetch --all --quiet', gitDir);
