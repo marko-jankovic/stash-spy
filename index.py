@@ -65,18 +65,40 @@ class StashTrace:
         cwd = argParams.project or os.getcwd();
 
         for filename in os.listdir(cwd):
-            abspath = os.path.abspath(os.path.join(cwd, filename));
-            isDir = os.path.isdir(abspath);
-            isGit = self.systemCall('git rev-parse --is-inside-work-tree', abspath);
-            dumpPath = os.path.abspath(cwd)  + '/' + argParams.user + '.txt';
+            if not filename.startswith('.'):
+                abspath = os.path.abspath(os.path.join(cwd, filename));
 
-            if isDir and isGit:
-                log = self.systemCall('git log --all --author=' + argParams.user + ' --pretty=format:"%ar : %s"', abspath);
+                try:
+                    isDir = os.path.isdir(abspath);
+                except:
+                    isDir = False;
 
-                if log:
-                    with open(dumpPath, 'a') as dumpFile:
-                        dumpFile.write('\n\n### ' + filename + ' ### \n\n' + log)
+                isGit = self.systemCall('git rev-parse --is-inside-work-tree --quiet', abspath);
+                dumpPath = os.path.abspath(cwd)  + '/' + argParams.user + '.txt';
 
+                if isDir and isGit:
+                    log = self.systemCall('git log --all --author=' + argParams.user + ' --pretty=format:"%ar : %s"', abspath);
+
+                    if log:
+                        with open(dumpPath, 'a') as dumpFile:
+                            dumpFile.write('\n\n### ' + filename + ' ### \n\n' + log)
+                elif isDir:
+                    subwd = abspath;
+
+                    for filename in os.listdir(subwd):
+                        if not filename.startswith('.'):
+                            subabspath = os.path.abspath(os.path.join(subwd, filename));
+                            isDir = os.path.isdir(subabspath);
+                            isGit = self.systemCall('git rev-parse --is-inside-work-tree --quiet', subabspath);
+
+                            if isDir and isGit:
+                                log = self.systemCall('git log --all --author=' + argParams.user + ' --pretty=format:"%ar : %s"', subabspath);
+
+                                if log:
+                                    with open(dumpPath, 'a') as dumpFile:
+                                        dumpFile.write('\n\n### ' + filename + ' ### \n\n' + log)
+                else:
+                    logger.info('file %s', filename);
 
 
     def clone(self, argParams):
@@ -174,7 +196,7 @@ class StashTrace:
         try:
             if cwd:
                 # fix for "fatal: Unable to create '/*/.git/index.lock': File exists."
-                subprocess.check_output('cd ' + cwd + ' && ' + 'find ./.git -name "*.lock" -type f -delete', shell=True);
+                subprocess.check_output('cd ' + cwd + ' && ' + 'find ./.git -name "*.lock" -type f -delete 2>/dev/null', shell=True);
 
                 output = subprocess.check_output('cd ' + cwd + ' && ' + command, shell=True);
             else:
