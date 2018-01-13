@@ -18,8 +18,6 @@ import time;
 
 # todo
 # git shortlog -sn
-# git log --all --author={USER} --pretty=format:"%an - %ar : %s" > "user".txt
-# warning: refname 'codata.staging.20170331' is ambiguous.
 
 logging.basicConfig(
     format='%(message)s',
@@ -35,8 +33,9 @@ class StashTrace:
 
         # URL and account variables
         parser.add_argument('-url', action='store', dest='stashUrl', help='Stash Url');
-        parser.add_argument('-username', action='store', dest='username', help='Stash Username');
-        parser.add_argument('-password', action='store', dest='password', help='Stash Password');
+        parser.add_argument('-username', action='store', dest='username', help='Stash Login Username');
+        parser.add_argument('-user', action='store', dest='user', help='Stash User');
+        parser.add_argument('-password', action='store', dest='password', help='Stash Login Password');
         parser.add_argument('-dest', action='store', dest='dest', help='Folder Path');
         parser.add_argument('-action', action='store', dest='action', help='Stash Action');
         parser.add_argument('-project', action='store', dest='project', help='Project Name');
@@ -60,6 +59,24 @@ class StashTrace:
         method = getattr(self, methodName);
 
         return method(args);
+
+
+    def analize(self, argParams):
+        cwd = argParams.project or os.getcwd();
+
+        for filename in os.listdir(cwd):
+            abspath = os.path.abspath(os.path.join(cwd, filename));
+            isDir = os.path.isdir(abspath);
+            isGit = self.systemCall('git rev-parse --is-inside-work-tree', abspath);
+            dumpPath = os.path.abspath(cwd)  + '/' + argParams.user + '.txt';
+
+            if isDir and isGit:
+                log = self.systemCall('git log --all --author=' + argParams.user + ' --pretty=format:"%ar : %s"', abspath);
+
+                if log:
+                    with open(dumpPath, 'a') as dumpFile:
+                        dumpFile.write('\n\n### ' + filename + ' ### \n\n' + log)
+
 
 
     def clone(self, argParams):
@@ -154,8 +171,6 @@ class StashTrace:
 
 
     def systemCall(self, command, cwd = None):
-        cmd = False;
-
         try:
             if cwd:
                 # fix for "fatal: Unable to create '/*/.git/index.lock': File exists."
