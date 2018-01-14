@@ -74,10 +74,11 @@ class StashTrace:
                     isDir = False;
 
                 isGit = self.systemCall('git rev-parse --is-inside-work-tree --quiet', abspath);
-                dumpPath = os.path.abspath(cwd)  + '/' + argParams.user + '.txt';
+                dumpName = argParams.user.split('@')[0];
+                dumpPath = os.path.abspath(cwd)  + '/' + dumpName + '.txt';
 
                 if isDir and isGit:
-                    log = self.systemCall('git log --all --author=' + argParams.user + ' --pretty=format:"%ar : %s"', abspath);
+                    log = self.systemCall('git log --all --author="<' + argParams.user + '>" --pretty=tformat:"%ar %s"', abspath);
 
                     if log:
                         with open(dumpPath, 'a') as dumpFile:
@@ -92,7 +93,7 @@ class StashTrace:
                             isGit = self.systemCall('git rev-parse --is-inside-work-tree --quiet', subabspath);
 
                             if isDir and isGit:
-                                log = self.systemCall('git log --all --author=' + argParams.user + ' --pretty=format:"%ar : %s"', subabspath);
+                                log = self.systemCall('git log --all --author="<' + argParams.user + '>" --pretty=tformat:"%ar %s"', subabspath);
 
                                 if log:
                                     with open(dumpPath, 'a') as dumpFile:
