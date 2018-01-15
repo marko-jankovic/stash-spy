@@ -34,7 +34,7 @@ class StashTrace:
         # URL and account variables
         parser.add_argument('-url', action='store', dest='stashUrl', help='Stash Url');
         parser.add_argument('-username', action='store', dest='username', help='Stash Login Username');
-        parser.add_argument('-user', action='store', dest='user', help='Stash User');
+        parser.add_argument('-user', action='store', dest='user', help='User Email');
         parser.add_argument('-password', action='store', dest='password', help='Stash Login Password');
         parser.add_argument('-dest', action='store', dest='dest', help='Folder Path');
         parser.add_argument('-action', action='store', dest='action', help='Stash Action');
@@ -78,7 +78,7 @@ class StashTrace:
                 dumpPath = os.path.abspath(cwd)  + '/' + dumpName + '.txt';
 
                 if isDir and isGit:
-                    log = self.systemCall('git log --all --author="<' + argParams.user + '>" --pretty=tformat:"%ar %s"', abspath);
+                    log = self.systemCall('git log --all --no-merges --author="<' + argParams.user + '>" --pretty=tformat:"%ar %s"', abspath);
 
                     if log:
                         with open(dumpPath, 'a') as dumpFile:
@@ -93,7 +93,7 @@ class StashTrace:
                             isGit = self.systemCall('git rev-parse --is-inside-work-tree --quiet', subabspath);
 
                             if isDir and isGit:
-                                log = self.systemCall('git log --all --author="<' + argParams.user + '>" --pretty=tformat:"%ar %s"', subabspath);
+                                log = self.systemCall('git log --all --no-merges --author="<' + argParams.user + '>" --pretty=tformat:"%ar %s"', subabspath);
 
                                 if log:
                                     with open(dumpPath, 'a') as dumpFile:
