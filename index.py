@@ -16,9 +16,6 @@ import time;
 #    level=10
 #);
 
-# todo
-# git shortlog -sn
-
 logging.basicConfig(
     format='%(message)s',
     level=10
@@ -60,8 +57,12 @@ class StashTrace:
 
         return method(args);
 
+    # check if current folder is git
+    def isGitFolder(self, path):
+        return self.systemCall('git rev-parse --is-inside-work-tree --quiet', path);
 
-    def analize(self, argParams):
+    # save all users to file
+    def getAllContributors(self, argParams):
         cwd = argParams.project or os.getcwd();
 
         for filename in os.listdir(cwd):
@@ -73,7 +74,50 @@ class StashTrace:
                 except:
                     isDir = False;
 
-                isGit = self.systemCall('git rev-parse --is-inside-work-tree --quiet', abspath);
+                isGit = self.isGitFolder(abspath);
+                dumpPath = os.path.abspath(cwd)  + '/all-users.txt';
+
+                if isDir and isGit:
+                    users = self.systemCall('git log --pretty="%an %ae%n%cn %ce" | sort | uniq', abspath);
+
+                    if users:
+                        with open(dumpPath, 'a') as dumpFile:
+                            dumpFile.write('\n' + users);
+                elif isDir:
+                    subwd = abspath;
+
+                    for filename in os.listdir(subwd):
+                        if not filename.startswith('.'):
+                            subabspath = os.path.abspath(os.path.join(subwd, filename));
+                            isDir = os.path.isdir(subabspath);
+                            isGit = self.isGitFolder(subabspath);
+
+                            if isDir and isGit:
+                                users = self.systemCall('git log --pretty="%an %ae%n%cn %ce" | sort | uniq', subabspath);
+
+                                if users:
+                                    with open(dumpPath, 'a') as dumpFile:
+                                        dumpFile.write('\n' + users);
+
+                                    # read line by line
+                                    uniqlines = set(open(dumpPath).readlines());
+                                    # sort lines and write to file
+                                    open(dumpPath, 'w').writelines(sorted(uniqlines));
+
+    # extract all commits by user name
+    def getAllCommitsByUserName(self, argParams):
+        cwd = argParams.project or os.getcwd();
+
+        for filename in os.listdir(cwd):
+            if not filename.startswith('.'):
+                abspath = os.path.abspath(os.path.join(cwd, filename));
+
+                try:
+                    isDir = os.path.isdir(abspath);
+                except:
+                    isDir = False;
+
+                isGit = self.isGitFolder(abspath);
                 dumpName = argParams.user.split('@')[0];
                 dumpPath = os.path.abspath(cwd)  + '/' + dumpName + '.txt';
 
@@ -90,7 +134,7 @@ class StashTrace:
                         if not filename.startswith('.'):
                             subabspath = os.path.abspath(os.path.join(subwd, filename));
                             isDir = os.path.isdir(subabspath);
-                            isGit = self.systemCall('git rev-parse --is-inside-work-tree --quiet', subabspath);
+                            isGit = self.isGitFolder(subabspath);
 
                             if isDir and isGit:
                                 log = self.systemCall('git log --all --no-merges --author="<' + argParams.user + '>" --pretty=tformat:"%ar %s"', subabspath);
@@ -98,8 +142,6 @@ class StashTrace:
                                 if log:
                                     with open(dumpPath, 'a') as dumpFile:
                                         dumpFile.write('\n\n### ' + filename + ' ### \n\n' + log)
-                else:
-                    logger.info('file %s', filename);
 
 
     def clone(self, argParams):
@@ -185,7 +227,7 @@ class StashTrace:
                     self.systemCall('git clone ' + cloneUrl + ' ' + gitDir);
 
                     # check if dir has .git
-                    isGit = self.systemCall('git rev-parse --is-inside-work-tree', gitDir);
+                    isGit = self.isGitFolder(gitDir);
 
                     if isGit != False:
                         self.checkRepo(gitDir)
