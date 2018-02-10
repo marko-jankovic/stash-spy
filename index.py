@@ -23,6 +23,8 @@ logging.basicConfig(
 
 logger = logging.getLogger('stash-spy');
 
+redirectErrors = True;
+
 class StashTrace:
     def __init__(self, args = None):
         # Create CLI Parser
@@ -59,7 +61,12 @@ class StashTrace:
 
     # check if current folder is git
     def isGitFolder(self, path):
-        return self.systemCall('git rev-parse --is-inside-work-tree --quiet', path);
+        isDir = self.isDir(path);
+
+        if isDir:
+            return self.systemCall('git rev-parse -q --is-inside-work-tree', path);
+        else:
+            return False;
 
     def isDir(self, path):
         try:
@@ -75,11 +82,10 @@ class StashTrace:
         for filename in os.listdir(cwd):
             if not filename.startswith('.'):
                 abspath = os.path.abspath(os.path.join(cwd, filename));
-                isDir = self.isDir(abspath);
                 isGit = self.isGitFolder(abspath);
                 dumpPath = os.path.abspath(cwd)  + '/all-users.txt';
 
-                if isDir and isGit:
+                if isGit:
                     users = self.systemCall('git log --pretty="%an %ae%n%cn %ce" | sort | uniq', abspath);
 
                     if users:
@@ -91,10 +97,9 @@ class StashTrace:
                     for filename in os.listdir(subwd):
                         if not filename.startswith('.'):
                             subabspath = os.path.abspath(os.path.join(subwd, filename));
-                            isDir = self.isDir(subabspath);
                             isGit = self.isGitFolder(subabspath);
 
-                            if isDir and isGit:
+                            if isGit:
                                 users = self.systemCall('git log --pretty="%an %ae%n%cn %ce" | sort | uniq', subabspath);
 
                                 if users:
@@ -113,27 +118,25 @@ class StashTrace:
         for filename in os.listdir(cwd):
             if not filename.startswith('.'):
                 abspath = os.path.abspath(os.path.join(cwd, filename));
-                isDir = self.isDir(abspath);
                 isGit = self.isGitFolder(abspath);
                 dumpName = argParams.user.split('@')[0];
                 dumpPath = os.path.abspath(cwd)  + '/' + dumpName + '.txt';
 
-                if isDir and isGit:
+                if isGit:
                     log = self.systemCall('git log --all --no-merges --author="<' + argParams.user + '>" --pretty=tformat:"%ar %s"', abspath);
 
                     if log:
                         with open(dumpPath, 'a') as dumpFile:
                             dumpFile.write('\n\n### ' + filename + ' ### \n\n' + log)
-                elif isDir:
+                elif self.isDir(abspath):
                     subwd = abspath;
 
                     for filename in os.listdir(subwd):
                         if not filename.startswith('.'):
                             subabspath = os.path.abspath(os.path.join(subwd, filename));
-                            isDir = self.isDir(subabspath);
                             isGit = self.isGitFolder(subabspath);
 
-                            if isDir and isGit:
+                            if isGit:
                                 log = self.systemCall('git log --all --no-merges --author="<' + argParams.user + '>" --pretty=tformat:"%ar %s"', subabspath);
 
                                 if log:
@@ -204,7 +207,7 @@ class StashTrace:
             if not filename.startswith('.'):
                 abspath = os.path.abspath(os.path.join(cwd, filename));
 
-                if self.isDir(abspath) and self.isGitFolder(abspath):
+                if self.isGitFolder(abspath):
                     logger.debug('\n> Checking #%s/%s ...', argParams.project, filename);
                     # check if last pull happend before N minutes
                     shouldRun = self.checkMtime(abspath, projectName, filename, argParams.olderThan);
@@ -219,7 +222,7 @@ class StashTrace:
                         if not dirName.startswith('.'):
                             subabspath = os.path.abspath(os.path.join(subwd, dirName));
 
-                            if self.isDir(subabspath) and self.isGitFolder(subabspath):
+                            if self.isGitFolder(subabspath):
                                 logger.debug('\n> Checking #%s/%s ...', projectName, dirName);
                                 # check if last pull happend before N minutes
                                 shouldRun = self.checkMtime(subabspath, projectName, dirName, argParams.olderThan);
@@ -258,20 +261,23 @@ class StashTrace:
 
 
     def systemCall(self, command, cwd = None):
+        # 2> redirects stderr to nowhere
+        redirectStderr = ' 2>/dev/null' if redirectErrors else '';
+
         try:
             if cwd:
                 # fix for "fatal: Unable to create '/*/.git/index.lock': File exists."
-                subprocess.call('cd ' + cwd + ' && ' + 'find ./.git -name "*.lock" -type f -delete 2>/dev/null', shell=True);
+                subprocess.call('cd ' + cwd + redirectStderr + ' && ' + 'find ./.git -name "*.lock" -type f -delete' + redirectStderr, shell=True);
 
-                startTime = time.time();
+                # startTime = time.time();
 
-                output = subprocess.check_output('cd ' + cwd + ' && ' + command, shell=True);
+                output = subprocess.check_output('cd ' + cwd + redirectStderr + ' && ' + command + redirectStderr, shell=True);
 
-                endTime = time.time();
+                # endTime = time.time();
 
                 #logger.debug('Elapsed time %s', endTime - startTime);
             else:
-                output = subprocess.check_output(command, shell=True);
+                output = subprocess.check_output(command + redirectStderr, shell=True);
 
             if len(output) > 0:
                 return output;
