@@ -1,332 +1,245 @@
 #!/usr/bin/python
 
-import stashy;
-import os;
-import re;
-import subprocess;
-import argparse;
-import logging;
-import sys;
-import signal;
-import time;
+import stashy
+import os
+import re
+import subprocess
+import argparse
+import logging
+import sys
+import signal
+import time
+from concurrent.futures import ThreadPoolExecutor
 
-#logging.basicConfig(
-#    format='%(asctime)s %(name)s: %(levelname)s %(message)s (#pid %(process)d)',
-#    datefmt='%H:%M:%S',
-#    level=10
-#);
-
+# Configure logging
 logging.basicConfig(
-    format='%(message)s',
-    level=10
-);
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    level=logging.DEBUG
+)
 
-logger = logging.getLogger('stash-spy');
+logger = logging.getLogger('stash-spy')
 
-redirectErrors = True;
+redirectErrors = True
 
 class StashTrace:
-    def __init__(self, args = None):
+    def __init__(self, args=None):
         # Create CLI Parser
-        parser = argparse.ArgumentParser(description='stashy arguments');
+        parser = argparse.ArgumentParser(description='Stashy arguments')
 
         # URL and account variables
-        parser.add_argument('-url', action='store', dest='stashUrl', help='Stash Url');
-        parser.add_argument('-username', action='store', dest='username', help='Stash Login Username');
-        parser.add_argument('-user', action='store', dest='user', help='User Email');
-        parser.add_argument('-password', action='store', dest='password', help='Stash Login Password');
-        parser.add_argument('-dest', action='store', dest='dest', help='Folder Path');
-        parser.add_argument('-action', action='store', dest='action', help='Stash Action');
-        parser.add_argument('-project', action='store', dest='project', help='Project Name');
-        parser.add_argument('-olderThan', action='store', dest='olderThan', help='Set fetch time in minutes');
+        parser.add_argument('-url', action='store', dest='stashUrl', help='Stash Url')
+        parser.add_argument('-username', action='store', dest='username', help='Stash Login Username')
+        parser.add_argument('-user', action='store', dest='user', help='User Email')
+        parser.add_argument('-password', action='store', dest='password', help='Stash Login Password')
+        parser.add_argument('-dest', action='store', dest='dest', help='Folder Path')
+        parser.add_argument('-action', action='store', dest='action', help='Stash Action')
+        parser.add_argument('-project', action='store', dest='project', help='Project Name')
+        parser.add_argument('-olderThan', action='store', dest='olderThan', help='Set fetch time in minutes')
+        parser.add_argument('-log-level', action='store', dest='log_level', default='INFO', help='Set log level (DEBUG, INFO, ERROR)')
 
-        signal.signal(signal.SIGINT, self.exitGracefully);
-        signal.signal(signal.SIGTERM, self.exitGracefully);
-        signal.signal(signal.SIGQUIT, self.exitGracefully);
+        signal.signal(signal.SIGINT, self.exitGracefully)
+        signal.signal(signal.SIGTERM, self.exitGracefully)
+        signal.signal(signal.SIGQUIT, self.exitGracefully)
 
         # Parsing CLI options
-        argParams = parser.parse_args();
+        argParams = parser.parse_args()
 
-        # get {argParams.action} method
-        return self.callMethod(argParams.action, argParams);
+        # Set log level based on input argument
+        log_levels = {
+            'DEBUG': logging.DEBUG,
+            'INFO': logging.INFO,
+            'ERROR': logging.ERROR
+        }
+        log_level = log_levels.get(argParams.log_level.upper(), logging.INFO)
+        logging.basicConfig(level=log_level)
 
+        # Call method based on action
+        return self.callMethod(argParams.action, argParams)
 
-    def exitGracefully(self,signum, frame):
-        logger.error('Gracefully Exit...');
+    def exitGracefully(self, signum, frame):
+        logger.error('Gracefully Exit...')
 
     def callMethod(self, methodName, args):
-        method = getattr(self, methodName);
+        method = getattr(self, methodName)
+        return method(args)
 
-        return method(args);
-
-    # check if current folder is git
     def isGitFolder(self, path):
-        isDir = self.isDir(path);
-
-        if isDir:
-            return self.systemCall('git rev-parse -q --is-inside-work-tree', path);
-        else:
-            return False;
+        if self.isDir(path):
+            return self.systemCall('git rev-parse -q --is-inside-work-tree', path)
+        return False
 
     def isDir(self, path):
         try:
-            return os.path.isdir(path);
+            return os.path.isdir(path)
         except:
-            return False;
+            return False
 
+    def systemCall(self, command, cwd=None):
+        # 2> redirects stderr to nowhere
+        redirectStderr = ' 2>/dev/null' if redirectErrors else ''
+        try:
+            if cwd:
+                subprocess.call(f'cd {cwd}{redirectStderr} && find ./.git -name "*.lock" -type f -delete{redirectStderr}', shell=True)
+                output = subprocess.check_output(f'cd {cwd}{redirectStderr} && {command}{redirectStderr}', shell=True)
+            else:
+                output = subprocess.check_output(f'{command}{redirectStderr}', shell=True)
 
-    # save all users to file
-    def getAllContributors(self, argParams):
-        cwd = argParams.project or os.getcwd();
+            if len(output) > 0:
+                return output
+            return False
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Subprocess failed with error: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error: {e}")
+            return False
 
-        for filename in os.listdir(cwd):
-            if not filename.startswith('.'):
-                abspath = os.path.abspath(os.path.join(cwd, filename));
-                isGit = self.isGitFolder(abspath);
-                dumpPath = os.path.abspath(cwd)  + '/all-users.txt';
+    def rate_limited_call(self, command, cwd=None, rate_limit_delay=2):
+        output = self.systemCall(command, cwd)
+        time.sleep(rate_limit_delay)
+        return output
 
-                if isGit:
-                    users = self.systemCall('git log --pretty="%an %ae%n%cn %ce" | sort | uniq', abspath);
+    def cloneAllRepos(self, dest, projectName, projectList):
+        logger.debug(f'\n### {projectName} ###')
 
-                    if users:
-                        with open(dumpPath, 'a') as dumpFile:
-                            dumpFile.write('\n' + users);
-                elif isDir:
-                    subwd = abspath;
+        def clone_repo(repo):
+            repoName = repo[unicode('name')].replace(' ', '-').lower()
+            projectPath = os.path.join(projectName, repoName)
+            gitDir = os.path.abspath(os.path.join(dest, projectPath))
 
-                    for filename in os.listdir(subwd):
-                        if not filename.startswith('.'):
-                            subabspath = os.path.abspath(os.path.join(subwd, filename));
-                            isGit = self.isGitFolder(subabspath);
+            if not os.path.exists(gitDir) or not self.isGitFolder(gitDir):
+                cloneUrl = repo[unicode('cloneUrl')]
+                self.systemCall(f'git clone {cloneUrl} {gitDir}')
+                self.checkRepo(gitDir)
+            else:
+                self.checkRepo(gitDir, True)
 
-                            if isGit:
-                                users = self.systemCall('git log --pretty="%an %ae%n%cn %ce" | sort | uniq', subabspath);
+        with ThreadPoolExecutor() as executor:
+            executor.map(clone_repo, projectList)
 
-                                if users:
-                                    with open(dumpPath, 'a') as dumpFile:
-                                        dumpFile.write('\n' + users);
+    def cleanStaleRepos(self, dest, threshold_days=30):
+        cutoff_time = time.time() - (threshold_days * 86400)
 
-                                    # read line by line
-                                    uniqlines = set(open(dumpPath).readlines());
-                                    # sort lines and write to file
-                                    open(dumpPath, 'w').writelines(sorted(uniqlines));
+        for root, dirs, files in os.walk(dest):
+            for dir_name in dirs:
+                repo_path = os.path.join(root, dir_name)
+                if os.path.isdir(repo_path) and self.isGitFolder(repo_path):
+                    mtime = os.stat(repo_path).st_mtime
+                    if mtime < cutoff_time:
+                        logger.info(f"Removing stale repository: {repo_path}")
+                        self.systemCall(f'rm -rf {repo_path}')
 
-    # extract all commits by user name
-    def getAllCommitsByUserName(self, argParams):
-        cwd = argParams.project or os.getcwd();
+    def backup_repo(self, gitDir, backup_remote='backup'):
+        self.systemCall(f'git remote add {backup_remote} <backup-repository-url> || true', gitDir)
+        self.systemCall(f'git push {backup_remote} --all', gitDir)
+        self.systemCall(f'git push {backup_remote} --tags', gitDir)
 
-        for filename in os.listdir(cwd):
-            if not filename.startswith('.'):
-                abspath = os.path.abspath(os.path.join(cwd, filename));
-                isGit = self.isGitFolder(abspath);
-                dumpName = argParams.user.split('@')[0];
-                dumpPath = os.path.abspath(cwd)  + '/' + dumpName + '.txt';
+    def checkRepo(self, gitDir, exist=None):
+        projectName = gitDir.split('/')[-1]
+        logger.debug(f'  ... git fetch --prune "{projectName}" ...')
+        self.systemCall('git fetch --prune --quiet', gitDir)
 
-                if isGit:
-                    log = self.systemCall('git log --all --no-merges --author="<' + argParams.user + '>" --pretty=tformat:"%ar %s"', abspath);
+        logger.debug(f'  ... grep all "{projectName}" branches ....')
+        grepBranhes = self.systemCall('git branch --all --quiet | grep origin | grep -v HEAD', gitDir)
 
-                    if log:
-                        with open(dumpPath, 'a') as dumpFile:
-                            dumpFile.write('\n\n### ' + filename + ' ### \n\n' + log)
-                elif self.isDir(abspath):
-                    subwd = abspath;
+        if grepBranhes:
+            allBranches = re.sub('\s+|\*', ' ', grepBranhes).strip().split(' ')
 
-                    for filename in os.listdir(subwd):
-                        if not filename.startswith('.'):
-                            subabspath = os.path.abspath(os.path.join(subwd, filename));
-                            isGit = self.isGitFolder(subabspath);
+            for branch in allBranches:
+                branchName = branch.replace('remotes/origin/', '')
 
-                            if isGit:
-                                log = self.systemCall('git log --all --no-merges --author="<' + argParams.user + '>" --pretty=tformat:"%ar %s"', subabspath);
+                if self.verifyBranch(branchName, gitDir):
+                    logger.debug(f'\n  ... git checkout #{branchName} ....')
+                    self.systemCall(f'git checkout -B {branchName} --force --quiet', gitDir)
 
-                                if log:
-                                    with open(dumpPath, 'a') as dumpFile:
-                                        dumpFile.write('\n\n### ' + filename + ' ### \n\n' + log)
+                    logger.debug(f'  ... git reset --hard origin/{branchName}....')
+                    self.systemCall(f'git reset --hard --quiet origin/{branchName}', gitDir)
+                else:
+                    logger.debug(f'  ... switching to origin/{branchName} branch ....')
+                    self.systemCall(f'git branch {branchName} origin/{branchName} --quiet', gitDir)
 
+    def verifyBranch(self, branchName, gitDir):
+        return self.systemCall(f'git rev-parse --verify --quiet {branchName}', gitDir)
 
-    # clone all projects repos or specific project repos
-    def clone(self, argParams):
-        # stash url, username and password are mandatory
-        if not (argParams.stashUrl and argParams.username and argParams.password):
-            logger.error('Stashy login requires username, password and stash url')
-            exit();
-
-        # Connect to stash
-        stash = stashy.connect(argParams.stashUrl, argParams.username, argParams.password);
-
-        # if dest is not defined save in root
-        dest = '../' + argParams.dest if argParams.dest else './';
-
-        if argParams.project:
-            projectList = stash.projects[argParams.project].repos.list();
-
-            self.cloneAllRepos(dest, argParams.project, projectList);
+    def get_github_repos(self, user, token):
+        url = f'https://api.github.com/users/{user}/repos'
+        headers = {'Authorization': f'token {token}'}
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            return response.json()  # List of repos
         else:
-            # Iterate over all projects (that you have access to)
-            allProjects = stash.projects.list();
-
-            for project in allProjects:
-                projectList = stash.projects[project[unicode('key')]].repos.list();
-
-                self.cloneAllRepos(dest, project[unicode('key')], projectList);
-
-    def checkMtime(self, dest, projectName, repoName, olderThan):
-        # hidden dir path
-        tmpDir = os.path.abspath(os.path.join(dest, projectName, '.tmp'));
-        # tmp file path
-        tmpFile = os.path.join(tmpDir, repoName);
-
-        # create hidden dir for storing tmp files
-        if not os.path.exists(tmpDir): os.makedirs(tmpDir);
-
-        # most recent content modification expressed in seconds
-        if os.path.isfile(tmpFile):
-            mtime = os.stat(tmpFile).st_mtime;
-        else:
-            mtime = 0;
-
-        # determine how old is file in seconds
-        minOld = int((time.time() - mtime)/60);
-        humanTime = time.strftime("%M:%S", time.gmtime(time.time() - mtime));
-
-        if minOld >= int(olderThan or 1):
-            # create temp file
-            open(tmpFile, 'w').close();
-
-            return True;
-        else:
-            logger.debug(' ... %s/%s has been updated before %s min', projectName, repoName, humanTime);
-            return False;
+            logger.error("Failed to fetch repositories")
+            return []
 
     def pull(self, argParams):
-        cwd = argParams.project or os.getcwd();
-        projectName = cwd.split('/')[-1];
-        logger.debug('\n### %s ###', cwd);
+        cwd = argParams.project or os.getcwd()
+        projectName = cwd.split('/')[-1]
+        logger.debug(f'\n### {cwd} ###')
 
         for filename in os.listdir(cwd):
             if not filename.startswith('.'):
-                abspath = os.path.abspath(os.path.join(cwd, filename));
+                abspath = os.path.abspath(os.path.join(cwd, filename))
 
                 if self.isGitFolder(abspath):
-                    logger.debug('\n> Checking #%s/%s ...', argParams.project, filename);
-                    # check if last pull happend before N minutes
-                    shouldRun = self.checkMtime(abspath, projectName, filename, argParams.olderThan);
+                    logger.debug(f'\n> Checking #{argParams.project}/{filename} ...')
+                    shouldRun = self.checkMtime(abspath, projectName, filename, argParams.olderThan)
 
-                    if shouldRun is True:
-                        self.checkRepo(abspath, True);
+                    if shouldRun:
+                        self.checkRepo(abspath, True)
 
                 elif self.isDir(abspath):
-                    subwd = abspath;
+                    subwd = abspath
 
                     for dirName in os.listdir(subwd):
                         if not dirName.startswith('.'):
-                            subabspath = os.path.abspath(os.path.join(subwd, dirName));
+                            subabspath = os.path.abspath(os.path.join(subwd, dirName))
 
                             if self.isGitFolder(subabspath):
-                                logger.debug('\n> Checking #%s/%s ...', projectName, dirName);
-                                # check if last pull happend before N minutes
-                                shouldRun = self.checkMtime(subabspath, projectName, dirName, argParams.olderThan);
+                                logger.debug(f'\n> Checking #{projectName}/{dirName} ...')
+                                shouldRun = self.checkMtime(subabspath, projectName, dirName, argParams.olderThan)
 
-                                if shouldRun is True:
-                                    self.checkRepo(subabspath, True);
+                                if shouldRun:
+                                    self.checkRepo(subabspath, True)
 
+    def checkMtime(self, dest, projectName, repoName, olderThan):
+        tmpDir = os.path.abspath(os.path.join(dest, projectName, '.tmp'))
+        tmpFile = os.path.join(tmpDir, repoName)
 
+        if not os.path.exists(tmpDir): 
+            os.makedirs(tmpDir)
 
-    def cloneAllRepos(self, dest, projectName , projectList):
-        logger.debug('\n### %s ###', projectName);
+        if os.path.isfile(tmpFile):
+            mtime = os.stat(tmpFile).st_mtime
+        else:
+            mtime = 0
 
-        for repo in projectList:
+        minOld = int((time.time() - mtime) / 60)
+        humanTime = time.strftime("%M:%S", time.gmtime(time.time() - mtime))
 
-            # repo name
-            repoName = repo[unicode('name')].replace(' ', '-').lower();
+        if minOld >= int(olderThan or 1):
+            open(tmpFile, 'w').close()
+            return True
+        else:
+            logger.debug(f' ... {projectName}/{repoName} has been updated before {humanTime} min')
+            return False
 
-            # replace space with dash and lowercase
-            projectPath = os.path.join(projectName, repoName);
+    def clone(self, argParams):
+        if not (argParams.stashUrl and argParams.username and argParams.password):
+            logger.error('Stashy login requires username, password and stash url')
+            exit()
 
-            # absolute dir path
-            gitDir = os.path.abspath(os.path.join(dest, projectPath));
+        stash = stashy.connect(argParams.stashUrl, argParams.username, argParams.password)
 
-            # clone repo if dir does not exist
-            if (os.path.exists(gitDir) == False or self.isGitFolder(gitDir) == False):
+        dest = '../' + argParams.dest if argParams.dest else './'
 
-                # repo clone url
-                cloneUrl = repo[unicode('cloneUrl')];
+        if argParams.project:
+            projectList = stash.projects[argParams.project].repos.list()
+            self.cloneAllRepos(dest, argParams.project, projectList)
+        else:
+            allProjects = stash.projects.list()
 
-                # clone repo in root/projectName/repoName
-                self.systemCall('git clone ' + cloneUrl + ' ' + gitDir);
-
-                self.checkRepo(gitDir)
-            else:
-                self.checkRepo(gitDir, True);
-
-
-    def systemCall(self, command, cwd = None):
-        # 2> redirects stderr to nowhere
-        redirectStderr = ' 2>/dev/null' if redirectErrors else '';
-
-        try:
-            if cwd:
-                # fix for "fatal: Unable to create '/*/.git/index.lock': File exists."
-                subprocess.call('cd ' + cwd + redirectStderr + ' && ' + 'find ./.git -name "*.lock" -type f -delete' + redirectStderr, shell=True);
-
-                # startTime = time.time();
-
-                output = subprocess.check_output('cd ' + cwd + redirectStderr + ' && ' + command + redirectStderr, shell=True);
-
-                # endTime = time.time();
-
-                #logger.debug('Elapsed time %s', endTime - startTime);
-            else:
-                output = subprocess.check_output(command + redirectStderr, shell=True);
-
-            if len(output) > 0:
-                return output;
-
-            else:
-                return False;
-
-        except:
-            return False;
-
-
-    def verifyBranch(self, branchName, gitDir):
-        return self.systemCall('git rev-parse --verify --quiet ' + branchName, gitDir);
-
-    def checkRepo (self, gitDir, exist = None):
-        projectName = gitDir.split('/')[-1];
-
-        logger.debug('  ... git fetch --prune "%s" ...', projectName);
-        # removing remote-tracking branch (deleting the refs to the branches)
-        # for branch that no longer exists on remote
-        # not about removing local branch that tracks remote-tracking branch
-        self.systemCall('git fetch --prune --quiet', gitDir);
-
-        logger.debug('  ... grep all "%s" branches ....', projectName);
-        # get list of all remotes
-        grepBranhes = self.systemCall('git branch --all --quiet | grep origin | grep -v HEAD', gitDir)
-
-        if grepBranhes != False:
-            # branch list, replace space and asterisk
-            allBranches = re.sub('\s+|\*', ' ', grepBranhes).strip().split(' ');
-
-            # git checkout for each branch and git pull
-            for branch in allBranches:
-                # branch name
-                branchName = branch.replace('remotes/origin/', '');
-
-                # if branch does not exists locally
-                if self.verifyBranch(branchName, gitDir):
-                    logger.debug('\n  ... git checkout #%s ....', branchName);
-                    self.systemCall('git checkout -B ' + branchName + ' --force --quiet', gitDir);
-
-                    logger.debug('  ... git reset --hard origin/%s....', branchName);
-                    # "git fetch" downloads the latest from remote without trying to merge or rebase anything
-                    # "git reset" for reseting the origin/{branchName} branch to what we just fetched
-                    # --hard option changes all the files in working tree to match the files in origin/{branchName}
-                    self.systemCall('git reset --hard --quiet origin/' + branchName, gitDir);
-                else:
-                    logger.debug('  ... switching to origin/%s branch ....', branchName);
-                    # create local branch {branchName}
-                    self.systemCall('git branch ' + branchName + ' origin/' + branchName + ' --quiet', gitDir);
+            for project in allProjects:
+                projectList = stash.projects[project['key']].repos.list()
+                self.cloneAllRepos(dest, project['key'], projectList)
 
 StashTrace()
