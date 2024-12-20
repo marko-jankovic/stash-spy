@@ -1,7 +1,3 @@
-Here's the corrected README documentation with the fix:
-
----
-
 # Stashy Repository Manager
 
 This is a Python script that helps to manage multiple Git repositories hosted on **Stash/Bitbucket Server** (formerly known as Stash). It supports repository cloning, updating, and cleaning, as well as flexible logging and rate-limiting features.
