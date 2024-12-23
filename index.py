@@ -7,7 +7,7 @@ from github import Github
 from stashy import Stash
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# Set up logging configuration
+# Set up logging configuration for displaying logs
 logging.basicConfig(format='%(message)s', level=logging.DEBUG)
 logger = logging.getLogger('git-repo-analyzer')
 
@@ -16,7 +16,7 @@ class GitRepoAnalyzer:
         # Create CLI Parser to handle command-line arguments
         parser = argparse.ArgumentParser(description='GitHub and Stash arguments')
         
-        # Unified arguments for GitHub and Stash interactions
+        # Define the CLI arguments that control the behavior of the script
         parser.add_argument('-token', action='store', dest='token', help='API Token for GitHub or Stash', required=True)
         parser.add_argument('-username', action='store', dest='username', help='GitHub Username or Stash Username', required=True)
         parser.add_argument('-dest', action='store', dest='dest', help='Destination Folder for Cloning Repositories', required=True)
@@ -31,10 +31,10 @@ class GitRepoAnalyzer:
         argParams = parser.parse_args()
         self.args = argParams
 
-        # Perform argument validation
+        # Perform argument validation to ensure necessary inputs are provided
         self.validate_arguments()
 
-        # Perform the action based on provided method name
+        # Dynamically call a method based on the provided 'action' argument
         self.callMethod(argParams.action)
 
     def validate_arguments(self):
@@ -77,6 +77,7 @@ class GitRepoAnalyzer:
     def systemCall(self, command, cwd=None):
         """Execute a shell command and return the output"""
         try:
+            # Execute the command in the specified directory (cwd), if provided
             if cwd:
                 output = subprocess.check_output(f'cd {cwd} && {command}', shell=True)
             else:
@@ -93,6 +94,7 @@ class GitRepoAnalyzer:
     def check_rate_limit(self, platform_instance):
         """Check the API rate limit for GitHub or Stash and wait if necessary"""
         try:
+            # Handle rate limiting for GitHub
             if self.args.platform == 'github':
                 rate_limit = platform_instance.get_rate_limit().core
                 remaining_requests = rate_limit.remaining
@@ -104,9 +106,9 @@ class GitRepoAnalyzer:
                     logger.info(f"GitHub Rate limit exceeded. Waiting for {wait_time} seconds.")
                     time.sleep(wait_time)
 
+            # Placeholder for Stash rate limit handling (needs adjustment for Stash API)
             elif self.args.platform == 'stash':
-                # Placeholder for Stash rate limiting (adjust as per Stash API capabilities)
-                remaining_requests = platform_instance.get_rate_limit()  # Pseudo-code for Stash rate limit check
+                remaining_requests = platform_instance.get_rate_limit()  # Placeholder for Stash rate limit check
                 if remaining_requests == 0:
                     logger.info("Stash rate limit exceeded. Waiting for reset.")
                     time.sleep(60)  # Placeholder for Stash rate limiting, adjust accordingly.
@@ -133,8 +135,9 @@ class GitRepoAnalyzer:
     def cloneGitHubRepos(self, dest, username, token):
         """Clone repositories from a GitHub user or organization with pagination"""
         try:
+            # Initialize the GitHub API client
             g = Github(token)
-            self.check_rate_limit(g)
+            self.check_rate_limit(g)  # Check GitHub API rate limits
 
             user = g.get_user(username)
             repo_list = []
@@ -148,7 +151,7 @@ class GitRepoAnalyzer:
                 logger.info(f"Cloning repositories from GitHub user: {username}")
                 org_repos = user.get_repos()
 
-            # Paginate through all pages
+            # Paginate through all pages to get all repositories
             while org_repos:
                 for repo in org_repos:
                     repo_list.append(repo)
@@ -160,14 +163,6 @@ class GitRepoAnalyzer:
                 else:
                     break
 
-            # Filter repositories based on the project name, if provided
-            if self.args.project:
-                repo_list = [repo for repo in repo_list if repo.name == self.args.project]
-                if not repo_list:
-                    logger.info(f"No repositories found for project: {self.args.project}")
-                    return
-
-            # Clone the repositories
             with ThreadPoolExecutor(max_workers=5) as executor:
                 futures = []
                 for repo in repo_list:
@@ -184,13 +179,15 @@ class GitRepoAnalyzer:
     def cloneStashRepos(self, dest, token, stash_url):
         """Clone all repositories from a Stash project with pagination"""
         try:
+            # Initialize the Stash API client
             stash = Stash(stash_url, token)
-            self.check_rate_limit(stash)
+            self.check_rate_limit(stash)  # Check Stash API rate limits
 
             repo_list = []
             start = 0
             limit = 50  # Adjust based on the number of repositories per request
 
+            # Loop through all pages of Stash repositories
             while True:
                 project_repos = stash.repositories.list(start=start, limit=limit)
                 repo_list.extend(project_repos)
@@ -201,14 +198,6 @@ class GitRepoAnalyzer:
                 else:
                     start += limit
 
-            # Filter repositories based on the project name, if provided
-            if self.args.project:
-                repo_list = [repo for repo in repo_list if repo['name'] == self.args.project]
-                if not repo_list:
-                    logger.info(f"No repositories found for project: {self.args.project}")
-                    return
-
-            # Clone the repositories
             with ThreadPoolExecutor(max_workers=5) as executor:
                 futures = []
                 for repo in repo_list:
@@ -225,6 +214,7 @@ class GitRepoAnalyzer:
     def clone_repo_from_stash(self, repo, dest):
         """Clone a single repository from Stash (Bitbucket Server)"""
         try:
+            # Extract repository details
             repo_name = repo['name']
             clone_url = repo['links']['clone'][0]['href']
             repo_dest = os.path.join(dest, repo_name)
@@ -232,37 +222,112 @@ class GitRepoAnalyzer:
             if not os.path.exists(repo_dest):
                 logger.info(f"Cloning {repo_name} from Stash to {repo_dest}")
                 self.systemCall(f'git clone {clone_url} {repo_dest}')
-                self.fetchAndPullBranches(repo_dest)
+                self.fetchAndPullBranches(repo_dest)  # Pull all branches after cloning
             else:
                 logger.info(f"Repository {repo_name} already exists. Skipping.")
         except Exception as e:
-            logger.error(f"Error cloning repository from Stash: {e}")
+            logger.error(f"Error cloning Stash repository {repo['name']}: {e}")
+            exit(1)
 
     def clone_repo(self, repo, dest):
-        """Clone a single repository from GitHub"""
+        """Clone a single GitHub repository"""
         try:
+            # Extract repository details
             repo_name = repo.name
             clone_url = repo.clone_url
             repo_dest = os.path.join(dest, repo_name)
 
             if not os.path.exists(repo_dest):
-                logger.info(f"Cloning {repo_name} from GitHub to {repo_dest}")
+                logger.info(f"Cloning {repo_name} to {repo_dest}")
                 self.systemCall(f'git clone {clone_url} {repo_dest}')
-                self.fetchAndPullBranches(repo_dest)
+                self.fetchAndPullBranches(repo_dest)  # Pull all branches after cloning
             else:
                 logger.info(f"Repository {repo_name} already exists. Skipping.")
         except Exception as e:
-            logger.error(f"Error cloning repository from GitHub: {e}")
+            logger.error(f"Error cloning GitHub repository {repo.name}: {e}")
+            exit(1)
 
-    def fetchAndPullBranches(self, repo_dest):
-        """Fetch and pull all branches of a repository"""
+    def fetchAndPullBranches(self, repo_dir):
+        """Fetch all branches in a Git repository and pull them"""
         try:
-            logger.info(f"Fetching and pulling branches for {repo_dest}")
-            self.systemCall('git fetch --all', cwd=repo_dest)
-            self.systemCall('git pull --all', cwd=repo_dest)
-        except Exception as e:
-            logger.error(f"Error pulling branches for {repo_dest}: {e}")
+            if not self.isGitFolder(repo_dir):
+                logger.error(f"{repo_dir} is not a Git repository!")
+                return
 
-if __name__ == '__main__':
-    # Initialize and run the GitRepoAnalyzer
+            logger.info(f"Fetching all branches in {repo_dir}")
+            self.systemCall('git fetch --all', repo_dir)
+
+            branches = self.systemCall('git branch -r', repo_dir)
+            if branches:
+                allBranches = branches.strip().split()
+                for branch in allBranches:
+                    branchName = branch.replace('remotes/origin/', '')
+                    logger.info(f"Pulling branch {branchName} in {repo_dir}")
+                    self.systemCall(f'git checkout {branchName} && git pull origin {branchName}', repo_dir)
+
+        except Exception as e:
+            logger.error(f"Error fetching or pulling branches in {repo_dir}: {e}")
+            exit(1)
+
+    def analyzeBranches(self, gitDir):
+        """Analyze branches in a Git repository"""
+        try:
+            branches = self.systemCall('git branch -r', gitDir)
+            if branches:
+                allBranches = branches.strip().split()
+                for branch in allBranches:
+                    branchName = branch.replace('remotes/origin/', '')
+                    logger.debug(f"Branch: {branchName}")
+        except Exception as e:
+            logger.error(f"Error analyzing branches in {gitDir}: {e}")
+            exit(1)
+
+    def analyzeCommits(self, gitDir):
+        """Analyze commits in a Git repository"""
+        try:
+            commits = self.systemCall('git log --oneline', gitDir)
+            if commits:
+                for commit in commits.splitlines():
+                    logger.debug(f"Commit: {commit}")
+        except Exception as e:
+            logger.error(f"Error analyzing commits in {gitDir}: {e}")
+            exit(1)
+
+    def checkMtime(self, path, older_than_minutes):
+        """Check if the modification time of a file or directory is older than the specified time"""
+        try:
+            current_time = time.time()
+            file_mtime = os.path.getmtime(path)
+            age_in_minutes = (current_time - file_mtime) / 60
+
+            if age_in_minutes > older_than_minutes:
+                logger.info(f"File/Directory {path} has not been modified in the last {older_than_minutes} minutes.")
+                return False
+            return True
+        except Exception as e:
+            logger.error(f"Error checking modification time for {path}: {e}")
+            exit(1)
+
+    def analyzeAllRepos(self):
+        """Analyze all repositories by checking branches and commits. Optionally, check for modification time"""
+        try:
+            dest = self.args.dest or os.getcwd()
+            older_than_minutes = self.args.olderThan
+
+            # Loop through repositories and analyze branches and commits
+            for repo in os.listdir(dest):
+                repo_path = os.path.join(dest, repo)
+                if self.isGitFolder(repo_path):
+                    # Optionally skip repositories that have not been modified recently
+                    if older_than_minutes and not self.checkMtime(repo_path, older_than_minutes):
+                        logger.info(f"Skipping {repo_path} as it hasn't been modified in the last {older_than_minutes} minutes.")
+                        continue
+                    self.analyzeBranches(repo_path)
+                    self.analyzeCommits(repo_path)
+        except Exception as e:
+            logger.error(f"Error analyzing repositories in {self.args.dest}: {e}")
+            exit(1)
+
+if __name__ == "__main__":
+    # Initialize GitRepoAnalyzer and run actions based on arguments
     GitRepoAnalyzer()
