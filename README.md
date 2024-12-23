@@ -1,138 +1,104 @@
-# Stashy Repository Manager
-
-This is a Python script that helps to manage multiple Git repositories hosted on **Stash/Bitbucket Server** (formerly known as Stash). It supports repository cloning, updating, and cleaning, as well as flexible logging and rate-limiting features.
-
----
-
-## Features
-
-- **Clone repositories** from **Stash/Bitbucket Server**.
-- **Update repositories** by fetching and resetting branches.
-- **Clean stale repositories** based on a defined threshold.
-- **Support for parallel cloning** to speed up repository management.
-- **Flexible logging** with configurable log levels (`DEBUG`, `INFO`, `ERROR`).
-- **Rate-limiting** to avoid hitting API limits or overloading the server.
-
----
+## Overview
+Command-line tool designed to interact with GitHub and Stash (Bitbucket Server) APIs to clone repositories and perform Git-related operations. This tool supports cloning repositories from GitHub or Stash, managing rate limits, and working with multiple repositories at once using multithreading.
 
 ## Requirements
 
-- Python 3.x
-- `stashy` module (for interacting with Stash/Bitbucket Server)
-- `git` installed on your machine
+To use this tool, you need:
+1. Python 3.x installed on your system.
+2. Access to GitHub or Stash API tokens for authentication.
+3. The required Python libraries (`github`, `stashy`, and `concurrent.futures`).
 
-Install dependencies:
-
-```bash
-pip install stashy
-```
-
----
-
-## Setup and Configuration
-
-### 1. Clone the repository or download the script.
+### Install Required Libraries
+You can install the required libraries by running the following command:
 
 ```bash
-git clone https://github.com/yourusername/stashy-repository-manager.git
-cd stashy-repository-manager
+pip install github stashy
 ```
 
-### 2. Configure the script
+## Setup
 
-The script uses command-line arguments to customize the execution. You can use the following options:
+1. **Clone the Repository**
+   - Clone repo
+     ```bash
+     git clone [https://github.com/your-repository.git](https://github.com/marko-jankovic/stash-spy.git)
+     ```
 
-- `-url` (Required): The base URL of your Stash/Bitbucket Server (e.g., `https://stash.example.com`).
-- `-username` (Required): Your username for authentication.
-- `-password` (Required): Your password or access token.
-- `-dest` (Optional): Destination directory where repositories should be cloned.
-- `-action` (Required): The action to perform (`clone`, `pull`, `clean`).
-- `-project` (Optional): A specific project or repository to act upon (leave empty to operate on all projects).
-- `-olderThan` (Optional): Time threshold (in minutes) for cleaning stale repositories.
-- `-log-level` (Optional): Set the log level (`DEBUG`, `INFO`, `ERROR`).
+2. **Get API Tokens**
+   - **GitHub**: Go to [GitHub Personal Access Tokens](https://github.com/settings/tokens) to generate a personal access token.
+   - **Stash/Bitbucket Server**: Follow your organization's guidelines to generate an API token.
 
----
+3. **Set Up Your Environment**
+   Ensure that you have access to a terminal or command prompt and Python installed. You will run the script from your terminal.
 
-## Actions
+## Running the Tool
 
-### 1. Clone Repositories
+### Command-Line Arguments
 
-To clone all repositories for a specific project or all projects from **Stash/Bitbucket Server**:
+The tool accepts the following command-line arguments:
 
+- `-token`: **(Required)** API token for GitHub or Stash.
+- `-username`: **(Required)** Your GitHub or Stash username.
+- `-dest`: **(Required)** Destination folder where the repositories will be cloned.
+- `-action`: **(Required)** Action to perform (e.g., `clone`, `analyze`).
+- `-platform`: **(Required)** Specify the platform, either `github` or `stash`.
+- `-project`: **(Optional)** The name of the project to filter repositories.
+- `-olderThan`: **(Optional)** Time in minutes since last modification to consider.
+- `-rate-limit`: **(Optional)** Rate limit time window for API requests (default is 60 seconds).
+- `-stash-url`: **(Required for Stash)** The URL of the Stash server if using Stash.
+
+### Example 1: Cloning GitHub Repositories
+
+To clone all repositories from a GitHub user or organization, run the following command:
 ```bash
-python stashy_repos.py -url https://stash.example.com -username your_username -password your_password -action clone -dest ./repositories -project your_project_name
+python index.py -token YOUR_GITHUB_TOKEN -username YOUR_GITHUB_USERNAME -dest /path/to/destination -action clone -platform github
 ```
 
-This will clone all repositories from `your_project_name` into the `repositories` folder.
-
-To clone all repositories across all projects in Stash:
-
+To clone a specific project from GitHub:
 ```bash
-python stashy_repos.py -url https://stash.example.com -username your_username -password your_password -action clone -dest ./repositories
+python index.py -token YOUR_GITHUB_TOKEN -username YOUR_GITHUB_USERNAME -dest /path/to/destination -action clone -platform github -project "your-project-name"
 ```
 
-### 2. Pull (Update) Repositories
+### Example 2: Cloning Stash (Bitbucket Server) Repositories
 
-To update all cloned repositories by fetching the latest changes:
-
+To clone all repositories from a Stash project:
 ```bash
-python stashy_repos.py -url https://stash.example.com -username your_username -password your_password -action pull -dest ./repositories -olderThan 60
+python index.py -token YOUR_STASH_TOKEN -username YOUR_STASH_USERNAME -dest /path/to/destination -action clone -platform stash -stash-url http://stash.yourcompany.com
 ```
 
-This will check all repositories in the `repositories` folder that were updated more than 60 minutes ago.
-
-### 3. Clean Stale Repositories
-
-To clean repositories that haven't been updated in the last 30 days:
-
+To clone a specific project from Stash:
 ```bash
-python stashy_repos.py -url https://stash.example.com -username your_username -password your_password -action clean -dest ./repositories -olderThan 43200
+python index.py -token YOUR_STASH_TOKEN -username YOUR_STASH_USERNAME -dest /path/to/destination -action clone -platform stash -stash-url http://stash.yourcompany.com -project "your-project-name"
 ```
 
-This will remove repositories that haven't been modified in the last 30 days (`43200` minutes).
+### Example 3: Setting a Rate Limit for API Requests
 
----
-
-## Logging
-
-The script uses Python's built-in `logging` module to log events. The log level can be set with the `-log-level` argument:
-
-- `DEBUG`: Logs detailed information (useful for debugging).
-- `INFO`: Logs general progress and status.
-- `ERROR`: Logs only error messages.
-
-Example with `DEBUG` level:
-
+If you want to set a custom rate limit for API requests (in seconds), you can specify the `-rate-limit` argument:
 ```bash
-python stashy_repos.py -url https://stash.example.com -username your_username -password your_password -action clone -dest ./repositories -log-level DEBUG
+python index.py -token YOUR_TOKEN -username YOUR_USERNAME -dest /path/to/destination -action clone -platform github -rate-limit 120
 ```
 
----
+This will set the rate limit to 120 seconds between API requests.
 
-## Example Workflow
+## How the Tool Works
 
-### Clone repositories from a specific project:
+1. **Cloning Repositories**:
+   - The tool fetches repositories from GitHub or Stash using the provided credentials and clones them to the specified destination folder.
+   - If the `-project` argument is provided, only repositories matching the project name are cloned.
+   
+2. **Rate Limiting**:
+   - The tool automatically checks the rate limit for GitHub or Stash API requests. If the rate limit is reached, it will wait until the limit resets before continuing.
 
+3. **Parallel Cloning**:
+   - The tool uses multithreading to clone repositories concurrently, speeding up the process.
+
+4. **Fetching and Pulling Branches**:
+   - After cloning each repository, the tool fetches and pulls all branches to ensure the local copy is up-to-date.
+
+## Example of Log Output
+
+During execution, the tool will log various activities in the terminal:
 ```bash
-python stashy_repos.py -url https://stash.example.com -username your_username -password your_password -action clone -project 'my-project' -dest ./repos
+INFO: Cloning repository 'repo_name' from GitHub to /path/to/destination
+INFO: Fetching and pulling branches for /path/to/destination/repo_name
+ERROR: Error cloning repository: repository_name
 ```
-
-### Pull (update) repositories older than 30 minutes:
-
-```bash
-python stashy_repos.py -url https://stash.example.com -username your_username -password your_password -action pull -dest ./repos -olderThan 30
-```
-
-### Clean repositories that haven't been updated in the last 7 days:
-
-```bash
-python stashy_repos.py -url https://stash.example.com -username your_username -password your_password -action clean -dest ./repos -olderThan 10080
-```
-
----
-
-## Additional Features
-
-- **Parallel Cloning**: The script uses multithreading (`ThreadPoolExecutor`) to clone repositories in parallel, making it faster for large numbers of repositories.
-- **Rate Limiting**: The script includes a rate-limiting feature to avoid hitting API or Git server rate limits. You can adjust the rate limit by modifying the script.
-- **Stash/Bitbucket Server Integration**: The script works specifically with **Stash/Bitbucket Server** repositories by providing the necessary login credentials.
