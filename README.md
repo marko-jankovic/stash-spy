@@ -1,104 +1,145 @@
 ## Overview
-Command-line tool designed to interact with GitHub and Stash (Bitbucket Server) APIs to clone repositories and perform Git-related operations. This tool supports cloning repositories from GitHub or Stash, managing rate limits, and working with multiple repositories at once using multithreading.
 
-## Requirements
+The **git_repo_analyzer** tool helps automate the process of cloning and analyzing repositories from GitHub or Stash (Bitbucket Server). It provides a command-line interface (CLI) that can be used to:
+- Clone repositories from GitHub or Stash.
+- Analyze repositories by checking their structure, branches, commits, and more.
+- Handle rate limits for API requests.
+- Perform other tasks like fetching all branches and pulling updates from cloned repositories.
 
-To use this tool, you need:
-1. Python 3.x installed on your system.
-2. Access to GitHub or Stash API tokens for authentication.
-3. The required Python libraries (`github`, `stashy`, and `concurrent.futures`).
+---
 
-### Install Required Libraries
-You can install the required libraries by running the following command:
+## Installation
+
+To get started with **git_repo_analyzer**, you need to ensure the following dependencies are installed:
+
+### Dependencies:
+1. **Python 3.x**: Ensure that Python is installed on your system.
+2. **Required Libraries**:
+   - `requests` (for interacting with GitHub and Stash APIs)
+   - `github` (for GitHub API)
+   - `stashy` (for Stash/Bitbucket Server API)
+   - `argparse` (for command-line argument parsing)
+   - `subprocess` (for executing system commands like `git`)
+
+You can install the necessary Python libraries using `pip`:
 
 ```bash
-pip install github stashy
+pip install requests github stashy
 ```
 
-## Setup
+---
 
-1. **Clone the Repository**
-   - Clone repo
-     ```bash
-     git clone [https://github.com/your-repository.git](https://github.com/marko-jankovic/stash-spy.git)
-     ```
+## Usage
 
-2. **Get API Tokens**
-   - **GitHub**: Go to [GitHub Personal Access Tokens](https://github.com/settings/tokens) to generate a personal access token.
-   - **Stash/Bitbucket Server**: Follow your organization's guidelines to generate an API token.
+Once you have everything set up, you can use the `git_repo_analyzer.py` script to interact with GitHub or Stash. This tool supports different actions like cloning repositories, analyzing them, and checking rate limits.
 
-3. **Set Up Your Environment**
-   Ensure that you have access to a terminal or command prompt and Python installed. You will run the script from your terminal.
+### Clone Repositories
 
-## Running the Tool
+To clone repositories from GitHub or Stash, use the `-action clone` argument.
 
-### Command-Line Arguments
+#### Command Example:
 
-The tool accepts the following command-line arguments:
-
-- `-token`: **(Required)** API token for GitHub or Stash.
-- `-username`: **(Required)** Your GitHub or Stash username.
-- `-dest`: **(Required)** Destination folder where the repositories will be cloned.
-- `-action`: **(Required)** Action to perform (e.g., `clone`, `analyze`).
-- `-platform`: **(Required)** Specify the platform, either `github` or `stash`.
-- `-project`: **(Optional)** The name of the project to filter repositories.
-- `-olderThan`: **(Optional)** Time in minutes since last modification to consider.
-- `-rate-limit`: **(Optional)** Rate limit time window for API requests (default is 60 seconds).
-- `-stash-url`: **(Required for Stash)** The URL of the Stash server if using Stash.
-
-### Example 1: Cloning GitHub Repositories
-
-To clone all repositories from a GitHub user or organization, run the following command:
 ```bash
-python index.py -token YOUR_GITHUB_TOKEN -username YOUR_GITHUB_USERNAME -dest /path/to/destination -action clone -platform github
+python git_repo_analyzer.py -token YOUR_TOKEN -username YOUR_USERNAME -dest /path/to/destination -action clone -platform github
 ```
 
-To clone a specific project from GitHub:
+#### Arguments:
+- **`-token`**: Your GitHub or Stash API token.
+- **`-username`**: Your GitHub or Stash username.
+- **`-dest`**: Destination directory where the repositories will be cloned.
+- **`-action`**: Use `clone` to clone repositories.
+- **`-platform`**: Either `github` or `stash`.
+- **`-project`**: Optional. The name of a specific project to clone.
+- **`-olderThan`**: Optional. Filter repositories based on their last modification time (in minutes).
+
+#### Example:
+Clone all repositories from a GitHub user:
+
 ```bash
-python index.py -token YOUR_GITHUB_TOKEN -username YOUR_GITHUB_USERNAME -dest /path/to/destination -action clone -platform github -project "your-project-name"
+python git_repo_analyzer.py -token your_github_token -username your_github_username -dest ./repos -action clone -platform github
 ```
 
-### Example 2: Cloning Stash (Bitbucket Server) Repositories
+---
 
-To clone all repositories from a Stash project:
+### Analyze All Repositories
+
+To analyze all repositories in the destination folder, use the `-action analyze` argument. This will perform checks on the cloned repositories in the specified folder.
+
+#### Command Example:
+
 ```bash
-python index.py -token YOUR_STASH_TOKEN -username YOUR_STASH_USERNAME -dest /path/to/destination -action clone -platform stash -stash-url http://stash.yourcompany.com
+python git_repo_analyzer.py -token YOUR_TOKEN -username YOUR_USERNAME -dest /path/to/destination -action analyze -platform github
 ```
 
-To clone a specific project from Stash:
+#### Explanation:
+- This command will analyze all the repositories in the destination folder (`/path/to/destination`).
+- You can further customize the analysis with options like `-project` to analyze only a specific repository or `-olderThan` to filter repositories by modification time.
+
+---
+
+### Check Rate Limit
+
+To prevent hitting the rate limit when using GitHub or Stash API, you can check the rate limit status.
+
+#### Command Example:
+
 ```bash
-python index.py -token YOUR_STASH_TOKEN -username YOUR_STASH_USERNAME -dest /path/to/destination -action clone -platform stash -stash-url http://stash.yourcompany.com -project "your-project-name"
+python git_repo_analyzer.py -token YOUR_TOKEN -username YOUR_USERNAME -dest /path/to/destination -action check-rate-limit -platform github
 ```
 
-### Example 3: Setting a Rate Limit for API Requests
+This will check the rate limit and wait if the requests have exceeded the limit.
 
-If you want to set a custom rate limit for API requests (in seconds), you can specify the `-rate-limit` argument:
+---
+
+## Command-Line Arguments
+
+Below are the command-line arguments supported by the Git Repo Analyzer.
+
+| Argument        | Description                                                                 |
+|-----------------|-----------------------------------------------------------------------------|
+| `-token`        | **Required**. API Token for GitHub or Stash.                                 |
+| `-username`     | **Required**. GitHub or Stash username.                                      |
+| `-dest`         | **Required**. Destination folder where repositories will be cloned or analyzed. |
+| `-action`       | **Required**. Action to perform (`clone`, `analyze`, `check-rate-limit`).    |
+| `-platform`     | **Required**. The platform to use (`github` or `stash`).                     |
+| `-project`      | Optional. The specific project name to filter repositories.                  |
+| `-olderThan`    | Optional. Analyze repositories modified within the last `X` minutes.        |
+| `-rate-limit`   | Optional. Rate limit time window for API requests (default is 60 seconds).   |
+| `-stash-url`    | Optional. The URL for the Stash server (required for Stash platform).       |
+
+---
+
+## Examples
+
+### Example 1: Clone Repositories from GitHub
+
 ```bash
-python index.py -token YOUR_TOKEN -username YOUR_USERNAME -dest /path/to/destination -action clone -platform github -rate-limit 120
+python git_repo_analyzer.py -token your_github_token -username your_github_username -dest ./repos -action clone -platform github
 ```
 
-This will set the rate limit to 120 seconds between API requests.
+This command clones all repositories from the specified GitHub user into the `./repos` folder.
 
-## How the Tool Works
+### Example 2: Analyze Repositories Older than 30 Minutes
 
-1. **Cloning Repositories**:
-   - The tool fetches repositories from GitHub or Stash using the provided credentials and clones them to the specified destination folder.
-   - If the `-project` argument is provided, only repositories matching the project name are cloned.
-   
-2. **Rate Limiting**:
-   - The tool automatically checks the rate limit for GitHub or Stash API requests. If the rate limit is reached, it will wait until the limit resets before continuing.
-
-3. **Parallel Cloning**:
-   - The tool uses multithreading to clone repositories concurrently, speeding up the process.
-
-4. **Fetching and Pulling Branches**:
-   - After cloning each repository, the tool fetches and pulls all branches to ensure the local copy is up-to-date.
-
-## Example of Log Output
-
-During execution, the tool will log various activities in the terminal:
 ```bash
-INFO: Cloning repository 'repo_name' from GitHub to /path/to/destination
-INFO: Fetching and pulling branches for /path/to/destination/repo_name
-ERROR: Error cloning repository: repository_name
+python git_repo_analyzer.py -token your_github_token -username your_github_username -dest ./repos -action analyze -platform github -olderThan 30
 ```
+
+This command analyzes repositories that have not been modified in the last 30 minutes.
+
+### Example 3: Check Rate Limit on GitHub
+
+```bash
+python git_repo_analyzer.py -token your_github_token -username your_github_username -dest ./repos -action check-rate-limit -platform github
+```
+
+This command checks if the rate limit for GitHub API requests has been reached and waits for reset if necessary.
+
+### Example 4: Clone Repositories from Stash
+
+```bash
+python git_repo_analyzer.py -token your_stash_token -username your_stash_username -dest ./stash_repos -action clone -platform stash -stash-url http://your.stash.server
+```
+
+This command clones all repositories from a Stash server into the `./stash_repos` folder.
+
