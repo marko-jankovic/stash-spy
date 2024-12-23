@@ -1,245 +1,268 @@
-#!/usr/bin/python
-
-import stashy
 import os
-import re
 import subprocess
-import argparse
 import logging
-import sys
-import signal
 import time
-from concurrent.futures import ThreadPoolExecutor
+import argparse
+from github import Github
+from stashy import Stash
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# Configure logging
-logging.basicConfig(
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    level=logging.DEBUG
-)
+# Set up logging configuration
+logging.basicConfig(format='%(message)s', level=logging.DEBUG)
+logger = logging.getLogger('git-repo-analyzer')
 
-logger = logging.getLogger('stash-spy')
-
-redirectErrors = True
-
-class StashTrace:
+class GitRepoAnalyzer:
     def __init__(self, args=None):
-        # Create CLI Parser
-        parser = argparse.ArgumentParser(description='Stashy arguments')
+        # Create CLI Parser to handle command-line arguments
+        parser = argparse.ArgumentParser(description='GitHub and Stash arguments')
+        
+        # Unified arguments for GitHub and Stash interactions
+        parser.add_argument('-token', action='store', dest='token', help='API Token for GitHub or Stash', required=True)
+        parser.add_argument('-username', action='store', dest='username', help='GitHub Username or Stash Username', required=True)
+        parser.add_argument('-dest', action='store', dest='dest', help='Destination Folder for Cloning Repositories', required=True)
+        parser.add_argument('-action', action='store', dest='action', help='Action to Perform (clone, analyze, etc.)', required=True)
+        parser.add_argument('-project', action='store', dest='project', help='GitHub or Stash Project Name')  # Optional for clone
+        parser.add_argument('-olderThan', action='store', dest='olderThan', type=int, help='Time (in minutes) since last modification to consider')
+        parser.add_argument('-rate-limit', action='store', dest='rate_limit', type=int, default=60, help='Rate limit time window (seconds) for API requests')
+        parser.add_argument('-platform', action='store', dest='platform', choices=['github', 'stash'], help='Platform to use (GitHub or Stash)', required=True)
+        parser.add_argument('-stash-url', action='store', dest='stash_url', help='Stash Server URL', required=False)  # Stash URL argument
 
-        # URL and account variables
-        parser.add_argument('-url', action='store', dest='stashUrl', help='Stash Url')
-        parser.add_argument('-username', action='store', dest='username', help='Stash Login Username')
-        parser.add_argument('-user', action='store', dest='user', help='User Email')
-        parser.add_argument('-password', action='store', dest='password', help='Stash Login Password')
-        parser.add_argument('-dest', action='store', dest='dest', help='Folder Path')
-        parser.add_argument('-action', action='store', dest='action', help='Stash Action')
-        parser.add_argument('-project', action='store', dest='project', help='Project Name')
-        parser.add_argument('-olderThan', action='store', dest='olderThan', help='Set fetch time in minutes')
-        parser.add_argument('-log-level', action='store', dest='log_level', default='INFO', help='Set log level (DEBUG, INFO, ERROR)')
-
-        signal.signal(signal.SIGINT, self.exitGracefully)
-        signal.signal(signal.SIGTERM, self.exitGracefully)
-        signal.signal(signal.SIGQUIT, self.exitGracefully)
-
-        # Parsing CLI options
+        # Parse arguments
         argParams = parser.parse_args()
+        self.args = argParams
 
-        # Set log level based on input argument
-        log_levels = {
-            'DEBUG': logging.DEBUG,
-            'INFO': logging.INFO,
-            'ERROR': logging.ERROR
-        }
-        log_level = log_levels.get(argParams.log_level.upper(), logging.INFO)
-        logging.basicConfig(level=log_level)
+        # Perform argument validation
+        self.validate_arguments()
 
-        # Call method based on action
-        return self.callMethod(argParams.action, argParams)
+        # Perform the action based on provided method name
+        self.callMethod(argParams.action)
 
-    def exitGracefully(self, signum, frame):
-        logger.error('Gracefully Exit...')
+    def validate_arguments(self):
+        """Validate that all required arguments are provided"""
+        if not self.args.token:
+            logger.error("Error: -token is required.")
+            exit(1)
+        if not self.args.username:
+            logger.error("Error: -username is required.")
+            exit(1)
+        if not self.args.dest:
+            logger.error("Error: -dest is required.")
+            exit(1)
+        if not self.args.action:
+            logger.error("Error: -action is required.")
+            exit(1)
+        if not self.args.platform:
+            logger.error("Error: -platform is required (either 'github' or 'stash').")
+            exit(1)
+        if self.args.platform == 'stash' and not self.args.stash_url:
+            logger.error("Error: -stash-url is required when using the Stash platform.")
+            exit(1)
 
-    def callMethod(self, methodName, args):
-        method = getattr(self, methodName)
-        return method(args)
+    def callMethod(self, methodName):
+        """Dynamically call a method based on the action specified in CLI args"""
+        try:
+            method = getattr(self, methodName)
+            method()
+        except AttributeError:
+            logger.error(f"Error: The action '{methodName}' is not valid.")
+            exit(1)
+        except Exception as e:
+            logger.error(f"Unexpected error occurred: {str(e)}")
+            exit(1)
 
     def isGitFolder(self, path):
-        if self.isDir(path):
-            return self.systemCall('git rev-parse -q --is-inside-work-tree', path)
-        return False
-
-    def isDir(self, path):
-        try:
-            return os.path.isdir(path)
-        except:
-            return False
+        """Check if the given path is a Git repository by looking for the .git directory"""
+        return os.path.isdir(os.path.join(path, '.git'))
 
     def systemCall(self, command, cwd=None):
-        # 2> redirects stderr to nowhere
-        redirectStderr = ' 2>/dev/null' if redirectErrors else ''
+        """Execute a shell command and return the output"""
         try:
             if cwd:
-                subprocess.call(f'cd {cwd}{redirectStderr} && find ./.git -name "*.lock" -type f -delete{redirectStderr}', shell=True)
-                output = subprocess.check_output(f'cd {cwd}{redirectStderr} && {command}{redirectStderr}', shell=True)
+                output = subprocess.check_output(f'cd {cwd} && {command}', shell=True)
             else:
-                output = subprocess.check_output(f'{command}{redirectStderr}', shell=True)
+                output = subprocess.check_output(command, shell=True)
 
-            if len(output) > 0:
-                return output
-            return False
+            return output.decode('utf-8') if output else False
         except subprocess.CalledProcessError as e:
-            logger.error(f"Subprocess failed with error: {e}")
+            logger.error(f"Error executing command: {command}, Error: {e}")
             return False
         except Exception as e:
-            logger.error(f"Unexpected error: {e}")
+            logger.error(f"Unexpected error during system call: {str(e)}")
             return False
 
-    def rate_limited_call(self, command, cwd=None, rate_limit_delay=2):
-        output = self.systemCall(command, cwd)
-        time.sleep(rate_limit_delay)
-        return output
+    def check_rate_limit(self, platform_instance):
+        """Check the API rate limit for GitHub or Stash and wait if necessary"""
+        try:
+            if self.args.platform == 'github':
+                rate_limit = platform_instance.get_rate_limit().core
+                remaining_requests = rate_limit.remaining
+                reset_time = rate_limit.reset
+                current_time = time.time()
 
-    def cloneAllRepos(self, dest, projectName, projectList):
-        logger.debug(f'\n### {projectName} ###')
+                if remaining_requests == 0:
+                    wait_time = reset_time - current_time + 1  # Adding 1 second for safety
+                    logger.info(f"GitHub Rate limit exceeded. Waiting for {wait_time} seconds.")
+                    time.sleep(wait_time)
 
-        def clone_repo(repo):
-            repoName = repo[unicode('name')].replace(' ', '-').lower()
-            projectPath = os.path.join(projectName, repoName)
-            gitDir = os.path.abspath(os.path.join(dest, projectPath))
+            elif self.args.platform == 'stash':
+                # Placeholder for Stash rate limiting (adjust as per Stash API capabilities)
+                remaining_requests = platform_instance.get_rate_limit()  # Pseudo-code for Stash rate limit check
+                if remaining_requests == 0:
+                    logger.info("Stash rate limit exceeded. Waiting for reset.")
+                    time.sleep(60)  # Placeholder for Stash rate limiting, adjust accordingly.
+        except Exception as e:
+            logger.error(f"Error checking rate limit: {str(e)}")
+            exit(1)
 
-            if not os.path.exists(gitDir) or not self.isGitFolder(gitDir):
-                cloneUrl = repo[unicode('cloneUrl')]
-                self.systemCall(f'git clone {cloneUrl} {gitDir}')
-                self.checkRepo(gitDir)
+    def cloneRepos(self):
+        """Clone repositories from GitHub or Stash based on the provided arguments"""
+        try:
+            token = self.args.token
+            username = self.args.username
+            dest = self.args.dest or os.getcwd()
+
+            if self.args.platform == 'github':
+                self.cloneGitHubRepos(dest, username, token)
+            elif self.args.platform == 'stash':
+                stash_url = self.args.stash_url
+                self.cloneStashRepos(dest, token, stash_url)
+        except Exception as e:
+            logger.error(f"Error during repository cloning: {str(e)}")
+            exit(1)
+
+    def cloneGitHubRepos(self, dest, username, token):
+        """Clone repositories from a GitHub user or organization with pagination"""
+        try:
+            g = Github(token)
+            self.check_rate_limit(g)
+
+            user = g.get_user(username)
+            repo_list = []
+            page = 1
+            per_page = 30  # The number of repositories per page
+
+            if user.type == 'Organization':
+                logger.info(f"Cloning repositories from GitHub organization: {username}")
+                org_repos = g.get_organization(username).get_repos()
             else:
-                self.checkRepo(gitDir, True)
+                logger.info(f"Cloning repositories from GitHub user: {username}")
+                org_repos = user.get_repos()
 
-        with ThreadPoolExecutor() as executor:
-            executor.map(clone_repo, projectList)
+            # Paginate through all pages
+            while org_repos:
+                for repo in org_repos:
+                    repo_list.append(repo)
 
-    def cleanStaleRepos(self, dest, threshold_days=30):
-        cutoff_time = time.time() - (threshold_days * 86400)
-
-        for root, dirs, files in os.walk(dest):
-            for dir_name in dirs:
-                repo_path = os.path.join(root, dir_name)
-                if os.path.isdir(repo_path) and self.isGitFolder(repo_path):
-                    mtime = os.stat(repo_path).st_mtime
-                    if mtime < cutoff_time:
-                        logger.info(f"Removing stale repository: {repo_path}")
-                        self.systemCall(f'rm -rf {repo_path}')
-
-    def backup_repo(self, gitDir, backup_remote='backup'):
-        self.systemCall(f'git remote add {backup_remote} <backup-repository-url> || true', gitDir)
-        self.systemCall(f'git push {backup_remote} --all', gitDir)
-        self.systemCall(f'git push {backup_remote} --tags', gitDir)
-
-    def checkRepo(self, gitDir, exist=None):
-        projectName = gitDir.split('/')[-1]
-        logger.debug(f'  ... git fetch --prune "{projectName}" ...')
-        self.systemCall('git fetch --prune --quiet', gitDir)
-
-        logger.debug(f'  ... grep all "{projectName}" branches ....')
-        grepBranhes = self.systemCall('git branch --all --quiet | grep origin | grep -v HEAD', gitDir)
-
-        if grepBranhes:
-            allBranches = re.sub('\s+|\*', ' ', grepBranhes).strip().split(' ')
-
-            for branch in allBranches:
-                branchName = branch.replace('remotes/origin/', '')
-
-                if self.verifyBranch(branchName, gitDir):
-                    logger.debug(f'\n  ... git checkout #{branchName} ....')
-                    self.systemCall(f'git checkout -B {branchName} --force --quiet', gitDir)
-
-                    logger.debug(f'  ... git reset --hard origin/{branchName}....')
-                    self.systemCall(f'git reset --hard --quiet origin/{branchName}', gitDir)
+                # Check if there are more repositories to fetch
+                if len(org_repos) == per_page:
+                    page += 1
+                    org_repos = user.get_repos(page=page, per_page=per_page)
                 else:
-                    logger.debug(f'  ... switching to origin/{branchName} branch ....')
-                    self.systemCall(f'git branch {branchName} origin/{branchName} --quiet', gitDir)
+                    break
 
-    def verifyBranch(self, branchName, gitDir):
-        return self.systemCall(f'git rev-parse --verify --quiet {branchName}', gitDir)
+            # Filter repositories based on the project name, if provided
+            if self.args.project:
+                repo_list = [repo for repo in repo_list if repo.name == self.args.project]
+                if not repo_list:
+                    logger.info(f"No repositories found for project: {self.args.project}")
+                    return
 
-    def get_github_repos(self, user, token):
-        url = f'https://api.github.com/users/{user}/repos'
-        headers = {'Authorization': f'token {token}'}
-        response = requests.get(url, headers=headers)
-        if response.status_code == 200:
-            return response.json()  # List of repos
-        else:
-            logger.error("Failed to fetch repositories")
-            return []
+            # Clone the repositories
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                futures = []
+                for repo in repo_list:
+                    futures.append(executor.submit(self.clone_repo, repo, dest))
 
-    def pull(self, argParams):
-        cwd = argParams.project or os.getcwd()
-        projectName = cwd.split('/')[-1]
-        logger.debug(f'\n### {cwd} ###')
+                # Wait for all tasks to finish
+                for future in as_completed(futures):
+                    future.result()
 
-        for filename in os.listdir(cwd):
-            if not filename.startswith('.'):
-                abspath = os.path.abspath(os.path.join(cwd, filename))
+        except Exception as e:
+            logger.error(f"Error fetching GitHub repositories: {e}")
+            exit(1)
 
-                if self.isGitFolder(abspath):
-                    logger.debug(f'\n> Checking #{argParams.project}/{filename} ...')
-                    shouldRun = self.checkMtime(abspath, projectName, filename, argParams.olderThan)
+    def cloneStashRepos(self, dest, token, stash_url):
+        """Clone all repositories from a Stash project with pagination"""
+        try:
+            stash = Stash(stash_url, token)
+            self.check_rate_limit(stash)
 
-                    if shouldRun:
-                        self.checkRepo(abspath, True)
+            repo_list = []
+            start = 0
+            limit = 50  # Adjust based on the number of repositories per request
 
-                elif self.isDir(abspath):
-                    subwd = abspath
+            while True:
+                project_repos = stash.repositories.list(start=start, limit=limit)
+                repo_list.extend(project_repos)
 
-                    for dirName in os.listdir(subwd):
-                        if not dirName.startswith('.'):
-                            subabspath = os.path.abspath(os.path.join(subwd, dirName))
+                # Check if there are more repositories to fetch
+                if len(project_repos) < limit:
+                    break
+                else:
+                    start += limit
 
-                            if self.isGitFolder(subabspath):
-                                logger.debug(f'\n> Checking #{projectName}/{dirName} ...')
-                                shouldRun = self.checkMtime(subabspath, projectName, dirName, argParams.olderThan)
+            # Filter repositories based on the project name, if provided
+            if self.args.project:
+                repo_list = [repo for repo in repo_list if repo['name'] == self.args.project]
+                if not repo_list:
+                    logger.info(f"No repositories found for project: {self.args.project}")
+                    return
 
-                                if shouldRun:
-                                    self.checkRepo(subabspath, True)
+            # Clone the repositories
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                futures = []
+                for repo in repo_list:
+                    futures.append(executor.submit(self.clone_repo_from_stash, repo, dest))
 
-    def checkMtime(self, dest, projectName, repoName, olderThan):
-        tmpDir = os.path.abspath(os.path.join(dest, projectName, '.tmp'))
-        tmpFile = os.path.join(tmpDir, repoName)
+                # Wait for all tasks to finish
+                for future in as_completed(futures):
+                    future.result()
 
-        if not os.path.exists(tmpDir): 
-            os.makedirs(tmpDir)
+        except Exception as e:
+            logger.error(f"Error fetching Stash repositories: {e}")
+            exit(1)
 
-        if os.path.isfile(tmpFile):
-            mtime = os.stat(tmpFile).st_mtime
-        else:
-            mtime = 0
+    def clone_repo_from_stash(self, repo, dest):
+        """Clone a single repository from Stash (Bitbucket Server)"""
+        try:
+            repo_name = repo['name']
+            clone_url = repo['links']['clone'][0]['href']
+            repo_dest = os.path.join(dest, repo_name)
 
-        minOld = int((time.time() - mtime) / 60)
-        humanTime = time.strftime("%M:%S", time.gmtime(time.time() - mtime))
+            if not os.path.exists(repo_dest):
+                logger.info(f"Cloning {repo_name} from Stash to {repo_dest}")
+                self.systemCall(f'git clone {clone_url} {repo_dest}')
+                self.fetchAndPullBranches(repo_dest)
+            else:
+                logger.info(f"Repository {repo_name} already exists. Skipping.")
+        except Exception as e:
+            logger.error(f"Error cloning repository from Stash: {e}")
 
-        if minOld >= int(olderThan or 1):
-            open(tmpFile, 'w').close()
-            return True
-        else:
-            logger.debug(f' ... {projectName}/{repoName} has been updated before {humanTime} min')
-            return False
+    def clone_repo(self, repo, dest):
+        """Clone a single repository from GitHub"""
+        try:
+            repo_name = repo.name
+            clone_url = repo.clone_url
+            repo_dest = os.path.join(dest, repo_name)
 
-    def clone(self, argParams):
-        if not (argParams.stashUrl and argParams.username and argParams.password):
-            logger.error('Stashy login requires username, password and stash url')
-            exit()
+            if not os.path.exists(repo_dest):
+                logger.info(f"Cloning {repo_name} from GitHub to {repo_dest}")
+                self.systemCall(f'git clone {clone_url} {repo_dest}')
+                self.fetchAndPullBranches(repo_dest)
+            else:
+                logger.info(f"Repository {repo_name} already exists. Skipping.")
+        except Exception as e:
+            logger.error(f"Error cloning repository from GitHub: {e}")
 
-        stash = stashy.connect(argParams.stashUrl, argParams.username, argParams.password)
+    def fetchAndPullBranches(self, repo_dest):
+        """Fetch and pull all branches of a repository"""
+        try:
+            logger.info(f"Fetching and pulling branches for {repo_dest}")
+            self.systemCall('git fetch --all', cwd=repo_dest)
+            self.systemCall('git pull --all', cwd=repo_dest)
+        except Exception as e:
+            logger.error(f"Error pulling branches for {repo_dest}: {e}")
 
-        dest = '../' + argParams.dest if argParams.dest else './'
-
-        if argParams.project:
-            projectList = stash.projects[argParams.project].repos.list()
-            self.cloneAllRepos(dest, argParams.project, projectList)
-        else:
-            allProjects = stash.projects.list()
-
-            for project in allProjects:
-                projectList = stash.projects[project['key']].repos.list()
-                self.cloneAllRepos(dest, project['key'], projectList)
-
-StashTrace()
+if __name__ == '__main__':
+    # Initialize and run the GitRepoAnalyzer
+    GitRepoAnalyzer()
